@@ -216,9 +216,15 @@
   --curved-edge-pad: 8px;
 }
 [data-cutout="punch_left"] {
-  --cutout-top-extra: 14px;
-  --cutout-left-extra: 24px;
+  --cutout-top-extra: 18px;
+  --cutout-left-extra: 0px;
   --curved-edge-pad: 10px;
+}
+@media (orientation: landscape) {
+  [data-cutout="punch_left"] {
+    --cutout-top-extra: 6px;
+    --cutout-left-extra: 24px;
+  }
 }
 [data-cutout="dynamic_island"] {
   --cutout-top-extra: 26px;
@@ -274,9 +280,32 @@ h1, h2, h3, h4, .font-display {
   color: #0d0d10;
 }
 
+/* Fluid Auto-Stretch Layout Tokens (Adapts seamlessly from 320px phones to 3840px ultrawide) */
+:root {
+  --fluid-gutter: clamp(12px, 1.8vw, 32px);
+  --layout-max-w: 100%;
+}
+
+[data-stretch="centered"] {
+  --layout-max-w: 1520px;
+}
+
+.sl-fluid-page {
+  width: 100%;
+  max-width: var(--layout-max-w);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: calc(var(--fluid-gutter) + env(safe-area-inset-left, 0px) + var(--cutout-left-extra) + var(--curved-edge-pad));
+  padding-right: calc(var(--fluid-gutter) + env(safe-area-inset-right, 0px) + var(--cutout-right-extra) + var(--curved-edge-pad));
+}
+
 /* Safe-area & curved-edge helpers */
 .pt-safe-cutout {
   padding-top: calc(env(safe-area-inset-top, 0px) + var(--cutout-top-extra));
+}
+
+.top-safe-rail {
+  top: calc(3.25rem + env(safe-area-inset-top, 0px) + var(--cutout-top-extra));
 }
 
 .pb-safe-bottom {
@@ -284,6 +313,11 @@ h1, h2, h3, h4, .font-display {
 }
 
 .px-safe-curved {
+  padding-left: calc(clamp(12px, 1.5vw, 24px) + env(safe-area-inset-left, 0px) + var(--cutout-left-extra) + var(--curved-edge-pad));
+  padding-right: calc(clamp(12px, 1.5vw, 24px) + env(safe-area-inset-right, 0px) + var(--cutout-right-extra) + var(--curved-edge-pad));
+}
+
+.px-safe-bar {
   padding-left: calc(env(safe-area-inset-left, 0px) + var(--cutout-left-extra) + var(--curved-edge-pad));
   padding-right: calc(env(safe-area-inset-right, 0px) + var(--cutout-right-extra) + var(--curved-edge-pad));
 }

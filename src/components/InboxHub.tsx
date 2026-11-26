@@ -633,15 +633,15 @@ export const InboxHub: React.FC<InboxHubProps> = ({
   }
 
   return (
-    <main className="mx-auto w-full max-w-[1640px] px-2.5 sm:px-5 lg:px-7 pt-3 sm:pt-5 pb-16 md:pb-6 px-safe-curved">
+    <main className="sl-fluid-page pt-3 sm:pt-4 pb-16 md:pb-5">
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFile} className="hidden" />
 
-      <div className="grid grid-cols-1 md:grid-cols-12 overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] h-[calc(100dvh-124px)] md:h-[calc(100dvh-92px)]">
+      <div className="flex overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] h-[calc(100dvh-124px-env(safe-area-inset-top,0px)-var(--cutout-top-extra)-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-88px-env(safe-area-inset-top,0px)-var(--cutout-top-extra))]">
         {/* =================================================================
             LEFT PANE: CONVERSATIONS LIST (1-on-1 E2EE, Groups, Live Support)
             ================================================================= */}
         <aside
-          className={`md:col-span-4 lg:col-span-4 flex flex-col border-r border-[var(--border-hairline)] bg-[var(--bg-elevated)]/40 min-h-0 ${
+          className={`w-full md:w-[300px] lg:w-[330px] xl:w-[360px] 2xl:w-[390px] shrink-0 flex-col border-r border-[var(--border-hairline)] bg-[var(--bg-elevated)]/40 min-h-0 ${
             activeId ? 'hidden md:flex' : 'flex'
           }`}
         >
@@ -800,7 +800,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
             RIGHT PANE: ACTIVE CHAT ROOM
             ================================================================= */}
         <section
-          className={`md:col-span-8 lg:col-span-8 flex flex-col min-h-0 bg-[var(--bg-canvas)]/40 ${
+          className={`min-w-0 flex-1 flex-col min-h-0 bg-[var(--bg-canvas)]/40 ${
             activeId ? 'flex' : 'hidden md:flex'
           }`}
         >
@@ -946,7 +946,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                       )}
 
                       <div
-                        className={`group relative max-w-[82%] sm:max-w-[70%] rounded-2xl px-3 py-2 text-xs shadow-xs ${
+                        className={`group relative max-w-[82%] sm:max-w-[70%] xl:max-w-[640px] rounded-2xl px-3 py-2 text-xs shadow-xs ${
                           isMine
                             ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] rounded-br-sm'
                             : 'border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)] rounded-bl-sm'

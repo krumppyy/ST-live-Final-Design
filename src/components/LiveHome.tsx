@@ -101,7 +101,7 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1640px] px-3 sm:px-5 lg:px-7 xl:px-8 pt-4 pb-28 md:pb-16 px-safe-curved">
+    <main className="sl-fluid-page pt-4 pb-28 md:pb-16">
       {/* Compact Category Strip: Icon-Only Search Tab directly BEFORE All Live */}
       <section className="space-y-3 border-b border-[var(--border-hairline)] pb-3.5">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2.5">
@@ -299,8 +299,14 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
               </div>
             </div>
           ) : (
-            /* 2-in-a-row on mobile/tablet, 4-in-a-row with smaller thumbnails on desktop */
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 lg:gap-3">
+            /* 2-in-a-row on mobile/tablet, 4-in-a-row on desktop, auto-scaling on ultrawide */
+            <div
+              className={`grid grid-cols-2 gap-3 sm:gap-4 lg:gap-3 ${
+                showWideRail
+                  ? 'lg:grid-cols-4 min-[2048px]:grid-cols-5 min-[2560px]:grid-cols-6 min-[2960px]:grid-cols-7 min-[3360px]:grid-cols-8'
+                  : 'lg:grid-cols-4 xl:grid-cols-5 min-[1920px]:grid-cols-6 min-[2480px]:grid-cols-7 min-[3000px]:grid-cols-8'
+              }`}
+            >
               {filtered.map((stream) => (
                 <article
                   key={stream.id}
@@ -367,7 +373,7 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
         {showWideRail && (
           <aside
             aria-label="Live Discovery Panel"
-            className="hidden xl:flex xl:w-[272px] 2xl:w-[304px] shrink-0 flex-col gap-3.5 sticky top-[68px]"
+            className="hidden xl:flex xl:w-[276px] 2xl:w-[316px] min-[1840px]:w-[348px] shrink-0 flex-col gap-3.5 sticky top-[68px]"
           >
             {/* 1. Featured Live Spotlight */}
             {spotlightStream && (

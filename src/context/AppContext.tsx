@@ -53,6 +53,8 @@ interface AppContextValue {
   setLocale: (l: LocaleCode) => void;
   cutout: CutoutProfile;
   setCutout: (c: CutoutProfile) => void;
+  stretchMode: 'auto' | 'centered';
+  setStretchMode: (m: 'auto' | 'centered') => void;
   device: DeviceInfo;
   t: ReturnType<typeof getTranslator>;
 
@@ -97,6 +99,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [fontSize, setFontSize] = useState<FontScale>(() => readPref<FontScale>('stlive_size', 'md'));
   const [locale, setLocale] = useState<LocaleCode>(() => readPref<LocaleCode>('stlive_locale', 'en'));
   const [cutout, setCutout] = useState<CutoutProfile>(() => readPref<CutoutProfile>('stlive_cutout', 'auto'));
+  const [stretchMode, setStretchMode] = useState<'auto' | 'centered'>(() =>
+    readPref<'auto' | 'centered'>('stlive_stretch', 'auto', ['auto', 'centered'])
+  );
   const [device, setDevice] = useState<DeviceInfo>(() => detectDeviceInfo());
 
   const [checkedInToday, setCheckedInToday] = useState(false);
@@ -158,6 +163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const effectiveCutout = cutout === 'auto' ? device.suggestedCutout : cutout;
     root.setAttribute('data-cutout', effectiveCutout);
+    root.setAttribute('data-stretch', stretchMode);
 
     const metaTheme = document.querySelector('meta[name="theme-color"]');
     if (metaTheme) {
@@ -179,10 +185,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       window.localStorage.setItem('stlive_size', fontSize);
       window.localStorage.setItem('stlive_locale', locale);
       window.localStorage.setItem('stlive_cutout', cutout);
+      window.localStorage.setItem('stlive_stretch', stretchMode);
     } catch {
       // ignore storage errors
     }
-  }, [theme, grade, font, fontSize, locale, cutout, device.suggestedCutout]);
+  }, [theme, grade, font, fontSize, locale, cutout, stretchMode, device.suggestedCutout]);
 
   const sendWsEvent = useCallback((event: string, payload: Record<string, unknown> = {}) => {
     const ws = wsRef.current;
@@ -331,6 +338,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLocale,
     cutout,
     setCutout,
+    stretchMode,
+    setStretchMode,
     device,
     t,
     streams,

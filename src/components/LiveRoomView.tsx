@@ -298,7 +298,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const hostPct = Math.round((pk.hostScore / totalPk) * 100);
 
   return (
-    <main className="mx-auto w-full max-w-[1640px] px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-12 px-safe-curved">
+    <main className="sl-fluid-page pt-5 pb-28 md:pb-12">
       {/* Top Room Controls Bar */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
@@ -476,9 +476,9 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
         </section>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left 8 Columns: Interactive Video Stage OR In-Stream Multiplayer Game Stage + PK + Multi-Guest */}
-        <div className="lg:col-span-8 space-y-6">
+      <div className="flex flex-col lg:flex-row gap-5 xl:gap-6 items-start">
+        {/* Main Stage: Interactive Video Stage OR In-Stream Multiplayer Game Stage + PK + Multi-Guest */}
+        <div className="w-full min-w-0 flex-1 space-y-6">
           {stageMode === 'game' && activeRoomGame ? (
             <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 space-y-4">
               {/* Compact Live Broadcast Strip above the In-Stream Game */}
@@ -735,7 +735,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             </section>
           ) : (
             /* Standard Live Video Broadcast Stage */
-            <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-black">
+            <div className="relative mx-auto aspect-video w-full max-w-[calc(74dvh*16/9)] overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-black">
               {cameraActive ? (
                 <video
                   ref={videoRef}
@@ -872,8 +872,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           </section>
         </div>
 
-        {/* Right 4 Columns: Real-Time WebSocket Chat & StreamLive Gift Ladder */}
-        <aside className="lg:col-span-4 flex flex-col rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] h-[610px]">
+        {/* Right Sidebar: Real-Time WebSocket Chat & StreamLive Gift Ladder */}
+        <aside className="w-full lg:w-[340px] xl:w-[376px] 2xl:w-[410px] shrink-0 flex flex-col rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] h-[610px] lg:h-[min(78dvh,760px)]">
           <div className="flex items-center justify-between border-b border-[var(--border-hairline)] px-4 py-3.5">
             <h2 className="font-display text-sm font-semibold text-[var(--fg-primary)]">
               Live Chat

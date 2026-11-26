@@ -58,6 +58,8 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({ open, onClos
     setLocale,
     cutout,
     setCutout,
+    stretchMode,
+    setStretchMode,
     device,
     t,
   } = useApp();
@@ -281,6 +283,36 @@ export const PreferencesSheet: React.FC<PreferencesSheetProps> = ({ open, onClos
                   {c.label}
                 </button>
               ))}
+            </div>
+
+            <div className="pt-2 space-y-2">
+              <span className="block text-xs font-medium text-[var(--fg-secondary)]">
+                Screen Fit Mode
+              </span>
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-[var(--bg-elevated)]">
+                <button
+                  type="button"
+                  onClick={() => setStretchMode('auto')}
+                  className={`h-9 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    stretchMode === 'auto'
+                      ? 'bg-[var(--bg-surface)] text-[var(--fg-primary)] shadow-xs'
+                      : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                  }`}
+                >
+                  Auto-Stretch (Full)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStretchMode('centered')}
+                  className={`h-9 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+                    stretchMode === 'centered'
+                      ? 'bg-[var(--bg-surface)] text-[var(--fg-primary)] shadow-xs'
+                      : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                  }`}
+                >
+                  Centered Wide
+                </button>
+              </div>
             </div>
           </section>
 

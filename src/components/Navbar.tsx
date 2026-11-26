@@ -126,7 +126,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Signature StreamLive Desktop Left Studio Rail (Compact 72px width) */}
       <aside
         aria-label="Studio Navigation Rail"
-        className="hidden md:flex fixed left-0 top-13 bottom-0 z-30 w-[72px] flex-col items-center justify-between border-r border-[var(--accent-primary)]/60 sl-rail-bg py-3"
+        className="hidden md:flex fixed left-0 top-safe-rail bottom-0 z-30 w-[72px] flex-col items-center justify-between border-r border-[var(--accent-primary)]/60 sl-rail-bg py-3"
       >
         <nav className="flex w-full flex-col items-center gap-1.5 px-1.5">
           {railItems.map((item) => {
@@ -189,7 +189,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Mobile & Tablet Fixed Bottom Bar (Sleek compact icons & spacing) */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-[var(--accent-primary)]/45 sl-rail-bg/95 backdrop-blur-md pb-safe-bottom px-safe-curved"
+        className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-[var(--accent-primary)]/45 sl-rail-bg/95 backdrop-blur-md pb-safe-bottom px-safe-bar"
       >
         <div className="grid grid-cols-6 h-12 items-center">
           {railItems.map((item) => {
