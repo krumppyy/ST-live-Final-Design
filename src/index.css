@@ -1,0 +1,317 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * StreamLive (STLive) Signature Color Grading System
+ * Directly calibrated from StreamLive Nova Dark, Quiet Light, Emerald, Surge, Onyx, Ballot & Spooky palettes
+ */
+:root {
+  /* Quiet Studio Light Mode (StreamLive #940000 crimson + #FFFFFF clean studio) */
+  --bg-canvas: #f7f7fa;
+  --bg-surface: #ffffff;
+  --bg-elevated: #efeff4;
+  --border-hairline: #e0e0e6;
+  --fg-primary: #111114;
+  --fg-secondary: #52525e;
+  --fg-muted: #6e6e7a;
+
+  --accent-primary: #940000;
+  --accent-primary-hover: #7a0000;
+  --accent-secondary: #4d7c0f;
+  --accent-gold: #b45309;
+  --accent-contrast: #ffffff;
+  --topbar-bg: linear-gradient(90deg, #ffffff, #f5f5f8 60%, #ececf2);
+  --rail-bg: #ffffff;
+
+  /* Switchable Typography Tokens */
+  --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --base-font-size: 16px;
+
+  /* Hardware Safe-Area & Punch-Hole / Curved-Edge Calibration */
+  --cutout-top-extra: 0px;
+  --cutout-left-extra: 0px;
+  --cutout-right-extra: 0px;
+  --curved-edge-pad: 0px;
+}
+
+/* Signature StreamLive Nova Dark (#0D0D10 + #D90429 Crimson + #A3E635 Acid Lime + #E8C86A Gold) */
+.dark {
+  --bg-canvas: #0d0d10;
+  --bg-surface: #18181e;
+  --bg-elevated: #141419;
+  --border-hairline: #2c2c36;
+  --fg-primary: #f4f4f6;
+  --fg-secondary: #b3b3bd;
+  --fg-muted: #7f7f8c;
+
+  --accent-primary: #d90429;
+  --accent-primary-hover: #b80322;
+  --accent-secondary: #a3e635;
+  --accent-gold: #e8c86a;
+  --accent-contrast: #ffffff;
+  --topbar-bg: linear-gradient(90deg, #08080a, #18181e 55%, #2b2b33);
+  --rail-bg: #141419;
+}
+
+/* StreamLive Color Grade: Emerald Forest (#07130D + #22C55E + #FF2B4E + #FFD166) */
+.dark[data-grade="emerald"] {
+  --bg-canvas: #07130d;
+  --bg-surface: #0d2317;
+  --bg-elevated: #0b1f14;
+  --border-hairline: #1d4a30;
+  --fg-primary: #eafff1;
+  --fg-secondary: #9fd4b4;
+  --accent-primary: #22c55e;
+  --accent-primary-hover: #16a34a;
+  --accent-secondary: #ff2b4e;
+  --accent-gold: #ffd166;
+  --accent-contrast: #06130c;
+  --topbar-bg: linear-gradient(90deg, #050f0a, #0d2317 60%, #153624);
+  --rail-bg: #0b1f14;
+}
+:root[data-grade="emerald"]:not(.dark) {
+  --accent-primary: #15803d;
+  --accent-primary-hover: #166534;
+  --accent-secondary: #e11d48;
+  --accent-gold: #ca8a04;
+}
+
+/* StreamLive Color Grade: Surge Cyber (#0A0A18 + #00F5FF Cyan + #B4FF00 Acid Lime + #FF00E5) */
+.dark[data-grade="surge"] {
+  --bg-canvas: #0a0a18;
+  --bg-surface: #1a1a38;
+  --bg-elevated: #12122b;
+  --border-hairline: #3a3a6e;
+  --fg-primary: #f0f2ff;
+  --fg-secondary: #9aa8d0;
+  --accent-primary: #00f5ff;
+  --accent-primary-hover: #00cfe0;
+  --accent-secondary: #b4ff00;
+  --accent-gold: #ffe66d;
+  --accent-contrast: #0a0e27;
+  --topbar-bg: linear-gradient(90deg, #070712, #12122b 60%, #24244d);
+  --rail-bg: #12122b;
+}
+:root[data-grade="surge"]:not(.dark) {
+  --accent-primary: #0284c7;
+  --accent-primary-hover: #0369a1;
+  --accent-secondary: #7c3aed;
+  --accent-gold: #d97706;
+}
+
+/* StreamLive Color Grade: Ballot Royal (#071627 + #FDC500 Gold + #2E6BFF Royal Blue) */
+.dark[data-grade="ballot"] {
+  --bg-canvas: #071627;
+  --bg-surface: #122a3e;
+  --bg-elevated: #0c2436;
+  --border-hairline: #234a5e;
+  --fg-primary: #eaf4ff;
+  --fg-secondary: #9fc2d8;
+  --accent-primary: #fdc500;
+  --accent-primary-hover: #e5b200;
+  --accent-secondary: #2e6bff;
+  --accent-gold: #feb615;
+  --accent-contrast: #101a00;
+  --topbar-bg: linear-gradient(90deg, #05111e, #0c2436 60%, #1a3a52);
+  --rail-bg: #0c2436;
+}
+:root[data-grade="ballot"]:not(.dark) {
+  --accent-primary: #1d4ed8;
+  --accent-primary-hover: #1e40af;
+  --accent-secondary: #d97706;
+  --accent-gold: #b45309;
+}
+
+/* StreamLive Color Grade: Onyx Pro (#0B0B0E + #CE1F27 + #9AA0AE) */
+.dark[data-grade="onyx"] {
+  --bg-canvas: #0b0b0e;
+  --bg-surface: #17171e;
+  --bg-elevated: #121218;
+  --border-hairline: #2d2d38;
+  --fg-primary: #f2f2f5;
+  --fg-secondary: #a7a7b9;
+  --accent-primary: #ce1f27;
+  --accent-primary-hover: #a8181f;
+  --accent-secondary: #e8c86a;
+  --accent-gold: #e8c86a;
+  --accent-contrast: #ffffff;
+  --topbar-bg: linear-gradient(90deg, #070709, #15151b 60%, #24242d);
+  --rail-bg: #121218;
+}
+:root[data-grade="onyx"]:not(.dark) {
+  --accent-primary: #18181b;
+  --accent-primary-hover: #27272a;
+  --accent-secondary: #ce1f27;
+  --accent-gold: #b45309;
+}
+
+/* StreamLive Color Grade: Spooky Ember (#1A0B0E + #E8641C + #7FD13B) */
+.dark[data-grade="ember"] {
+  --bg-canvas: #1a0b0e;
+  --bg-surface: #3a1b22;
+  --bg-elevated: #291217;
+  --border-hairline: #5e2f3a;
+  --fg-primary: #fbefe2;
+  --fg-secondary: #d8afa0;
+  --accent-primary: #e8641c;
+  --accent-primary-hover: #cf5312;
+  --accent-secondary: #7fd13b;
+  --accent-gold: #f0b64b;
+  --accent-contrast: #ffffff;
+  --topbar-bg: linear-gradient(90deg, #13070a, #291217 60%, #441f27);
+  --rail-bg: #291217;
+}
+:root[data-grade="ember"]:not(.dark) {
+  --accent-primary: #c2410c;
+  --accent-primary-hover: #9a3412;
+  --accent-secondary: #15803d;
+  --accent-gold: #b45309;
+}
+
+/* Switchable Font Families (including StreamLive's Fredoka & Playfair Display) */
+[data-font="jakarta"] {
+  --font-display: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+}
+[data-font="fredoka"] {
+  --font-display: "Fredoka", system-ui, sans-serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+}
+[data-font="outfit"] {
+  --font-display: "Outfit", system-ui, sans-serif;
+  --font-body: "Plus Jakarta Sans", system-ui, sans-serif;
+}
+[data-font="manrope"] {
+  --font-display: "Manrope", system-ui, sans-serif;
+  --font-body: "Manrope", system-ui, sans-serif;
+}
+[data-font="dmsans"] {
+  --font-display: "DM Sans", system-ui, sans-serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+}
+[data-font="playfair"] {
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-body: "DM Sans", system-ui, sans-serif;
+}
+
+/* Font Size Scaling */
+[data-size="sm"] {
+  --base-font-size: 14px;
+}
+[data-size="md"] {
+  --base-font-size: 16px;
+}
+[data-size="lg"] {
+  --base-font-size: 18px;
+}
+[data-size="xl"] {
+  --base-font-size: 19.5px;
+}
+
+/* Punch-Hole / Notch / Curved-Edge Hardware Calibration Profiles */
+[data-cutout="punch_center"] {
+  --cutout-top-extra: 18px;
+  --curved-edge-pad: 8px;
+}
+[data-cutout="punch_left"] {
+  --cutout-top-extra: 14px;
+  --cutout-left-extra: 24px;
+  --curved-edge-pad: 10px;
+}
+[data-cutout="dynamic_island"] {
+  --cutout-top-extra: 26px;
+  --curved-edge-pad: 12px;
+}
+[data-cutout="curved_tablet"] {
+  --cutout-top-extra: 10px;
+  --curved-edge-pad: 16px;
+}
+[data-cutout="flat"] {
+  --cutout-top-extra: 0px;
+  --cutout-left-extra: 0px;
+  --cutout-right-extra: 0px;
+  --curved-edge-pad: 0px;
+}
+
+html {
+  font-size: var(--base-font-size);
+  font-family: var(--font-body);
+  background-color: var(--bg-canvas);
+  color: var(--fg-primary);
+  scroll-behavior: smooth;
+}
+
+.dark body {
+  letter-spacing: 0.01em;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+.font-mono-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.sl-topbar-bg {
+  background: var(--topbar-bg);
+}
+
+.sl-rail-bg {
+  background: var(--rail-bg);
+}
+
+.sl-brand-monogram {
+  background: linear-gradient(135deg, #2c2c36, var(--accent-primary));
+}
+
+.sl-rail-icon-active {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+  color: #0d0d10;
+}
+
+/* Safe-area & curved-edge helpers */
+.pt-safe-cutout {
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--cutout-top-extra));
+}
+
+.pb-safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px);
+}
+
+.px-safe-curved {
+  padding-left: calc(env(safe-area-inset-left, 0px) + var(--cutout-left-extra) + var(--curved-edge-pad));
+  padding-right: calc(env(safe-area-inset-right, 0px) + var(--cutout-right-extra) + var(--curved-edge-pad));
+}
+
+html, body, * {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

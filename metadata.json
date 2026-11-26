@@ -1,0 +1,6 @@
+{
+  "name": "STLive",
+  "description": "All-OS minimalist livestreaming platform with unified 5-role access, Host-controlled Admin delegation, standalone pro Camera Studio, and real-time host-approved multiplayer games.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
