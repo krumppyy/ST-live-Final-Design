@@ -209,7 +209,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
   };
 
   return (
-    <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
+    <main className="mx-auto w-full max-w-[1640px] px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
       {/* Header & Table Switcher */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>

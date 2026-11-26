@@ -10,7 +10,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
   const { mediaLibrary, removeMediaAsset, checkedInToday, bonusTokens, claimDailyCheckIn } = useApp();
 
   return (
-    <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
+    <main className="mx-auto w-full max-w-[1640px] px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[var(--border-hairline)] pb-5">
         <div>
           <h1 className="font-display text-2xl sm:text-3xl font-bold text-[var(--fg-primary)]">
@@ -69,7 +69,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           </button>
         </section>
       ) : (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {mediaLibrary.map((item) => (
             <article
               key={item.id}

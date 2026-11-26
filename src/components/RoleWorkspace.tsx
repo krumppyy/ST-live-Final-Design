@@ -364,7 +364,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
   );
 
   return (
-    <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
+    <main className="mx-auto w-full max-w-[1640px] px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-16 px-safe-curved space-y-6">
       {/* Top Workspace Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border-hairline)] pb-5">
         <div>

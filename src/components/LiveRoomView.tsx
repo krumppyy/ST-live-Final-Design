@@ -298,7 +298,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const hostPct = Math.round((pk.hostScore / totalPk) * 100);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-12 px-safe-curved">
+    <main className="mx-auto w-full max-w-[1640px] px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-12 px-safe-curved">
       {/* Top Room Controls Bar */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">

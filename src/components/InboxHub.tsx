@@ -633,7 +633,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-2.5 sm:px-5 pt-3 sm:pt-5 pb-16 md:pb-6 px-safe-curved">
+    <main className="mx-auto w-full max-w-[1640px] px-2.5 sm:px-5 lg:px-7 pt-3 sm:pt-5 pb-16 md:pb-6 px-safe-curved">
       <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageFile} className="hidden" />
 
       <div className="grid grid-cols-1 md:grid-cols-12 overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] h-[calc(100dvh-124px)] md:h-[calc(100dvh-92px)]">
