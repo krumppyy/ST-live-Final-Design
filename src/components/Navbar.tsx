@@ -5,6 +5,7 @@ import {
   Film,
   Gamepad2,
   LayoutGrid,
+  MessageCircle,
   SlidersHorizontal,
   User,
   WifiOff,
@@ -12,7 +13,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
 
-export type ActiveTab = 'live' | 'games' | 'camera' | 'library' | 'workspace';
+export type ActiveTab = 'live' | 'games' | 'camera' | 'library' | 'inbox' | 'workspace';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -52,6 +53,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'games', label: t('navGames'), icon: Gamepad2 },
     { id: 'camera', label: t('navCamera'), icon: Camera },
     { id: 'library', label: 'Library', icon: Film, count: mediaLibrary.length || undefined },
+    { id: 'inbox', label: 'Inbox', icon: MessageCircle },
     { id: 'workspace', label: t('navWorkspace'), icon: LayoutGrid },
   ];
 
@@ -189,7 +191,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         aria-label="Mobile Navigation"
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-[var(--accent-primary)]/45 sl-rail-bg/95 backdrop-blur-md pb-safe-bottom px-safe-curved"
       >
-        <div className="grid grid-cols-5 h-12 items-center">
+        <div className="grid grid-cols-6 h-12 items-center">
           {railItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;

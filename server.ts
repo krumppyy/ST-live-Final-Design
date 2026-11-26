@@ -5,22 +5,37 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
+  buildLiveSupportReply,
   buildSessionFromToken,
+  consumeViewOnceMessage,
+  createGroupConversation,
   db,
+  deleteInboxMessage,
   getActiveGrant,
+  getConversationMemberUids,
   getHostAdmins,
+  getOrCreateDmConversation,
   getTasksForAdmin,
   getTasksForHost,
   getUserByUid,
   hashPassword,
+  hydrateConversation,
   initSchema,
+  insertInboxMessage,
+  inviteGroupMembers,
+  isConversationMember,
+  joinGroupByInviteCode,
   listAgencyHosts,
   listAllStreams,
   listBandEvents,
   listBrandDrops,
+  listConversationMessages,
   listDirectoryUsers,
+  listUserConversations,
   parsePermissions,
+  purgeExpiredInboxMessages,
   signSessionToken,
+  updateConversationSettings,
   verifyPassword,
 } from './server/db';
 import { MultiplayerGameEngine } from './server/games';
@@ -37,7 +52,7 @@ import type {
 initSchema();
 
 const app = express();
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '8mb' }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
@@ -769,6 +784,230 @@ app.post('/api/games', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// REST API: Inbox (1-on-1 Auto-E2EE, Groups & Invites, Live Support, Disappearing & View-Once)
+// ---------------------------------------------------------------------------
+
+function broadcastToUids(uids: string[], event: string, payload: unknown) {
+  const set = new Set(uids);
+  for (const client of clients) {
+    if (client.session && set.has(client.session.uid)) {
+      sendWs(client.ws, event, payload);
+    }
+  }
+}
+
+// Server-authoritative Disappearing Message Sweeper (purges expired messages every 2s)
+setInterval(() => {
+  const purged = purgeExpiredInboxMessages();
+  if (purged.length === 0) return;
+  const byConv = new Map<string, string[]>();
+  for (const p of purged) {
+    const arr = byConv.get(p.conversationId) || [];
+    arr.push(p.id);
+    byConv.set(p.conversationId, arr);
+  }
+  for (const [conversationId, ids] of byConv.entries()) {
+    const members = getConversationMemberUids(conversationId);
+    broadcastToUids(members, 'inbox:expired', { conversationId, messageIds: ids });
+  }
+}, 2000);
+
+app.get('/api/inbox/conversations', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const conversations = listUserConversations(session.uid, session.displayName);
+  res.json({ conversations });
+});
+
+app.post('/api/inbox/dm', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const targetUid = typeof req.body?.targetUid === 'string' ? req.body.targetUid : '';
+  const result = getOrCreateDmConversation({ uid: session.uid, displayName: session.displayName }, targetUid);
+  if (result.error || !result.conversation) {
+    return res.status(400).json({ error: result.error || 'Could not start encrypted chat.' });
+  }
+  const members = getConversationMemberUids(result.conversation.id);
+  broadcastToUids(members, 'inbox:refresh', { conversationId: result.conversation.id });
+  res.status(201).json({ conversation: result.conversation });
+});
+
+app.post('/api/inbox/groups', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  if (title.length < 2) {
+    return res.status(400).json({ error: 'Group name must be at least 2 characters.' });
+  }
+  const memberUids = Array.isArray(req.body?.memberUids)
+    ? req.body.memberUids.filter((u: unknown): u is string => typeof u === 'string').slice(0, 40)
+    : [];
+  const defaultTtlSec = Number(req.body?.defaultTtlSec) || 0;
+  const e2eeEnabled = req.body?.e2eeEnabled !== false;
+
+  const conversation = createGroupConversation({
+    creatorUid: session.uid,
+    creatorName: session.displayName,
+    title,
+    memberUids,
+    defaultTtlSec,
+    e2eeEnabled,
+  });
+  const members = getConversationMemberUids(conversation.id);
+  broadcastToUids(members, 'inbox:refresh', { conversationId: conversation.id });
+  res.status(201).json({ conversation });
+});
+
+app.post('/api/inbox/groups/:id/invite', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const memberUids = Array.isArray(req.body?.memberUids)
+    ? req.body.memberUids.filter((u: unknown): u is string => typeof u === 'string').slice(0, 30)
+    : [];
+  if (memberUids.length === 0) {
+    return res.status(400).json({ error: 'Provide at least one member UID to invite.' });
+  }
+  const result = inviteGroupMembers(req.params.id, session.uid, session.displayName, memberUids);
+  if (result.error || !result.conversation) {
+    return res.status(400).json({ error: result.error || 'Could not invite members.' });
+  }
+  const members = getConversationMemberUids(result.conversation.id);
+  broadcastToUids(members, 'inbox:refresh', { conversationId: result.conversation.id });
+  res.json({ conversation: result.conversation, added: result.added });
+});
+
+app.post('/api/inbox/groups/join', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const inviteCode = typeof req.body?.inviteCode === 'string' ? req.body.inviteCode : '';
+  const result = joinGroupByInviteCode(inviteCode, session.uid, session.displayName);
+  if (result.error || !result.conversation) {
+    return res.status(404).json({ error: result.error || 'Invite code not found.' });
+  }
+  const members = getConversationMemberUids(result.conversation.id);
+  broadcastToUids(members, 'inbox:refresh', { conversationId: result.conversation.id });
+  res.json({ conversation: result.conversation });
+});
+
+app.patch('/api/inbox/conversations/:id/settings', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const defaultTtlSec = typeof req.body?.defaultTtlSec === 'number' ? req.body.defaultTtlSec : undefined;
+  const title = typeof req.body?.title === 'string' ? req.body.title : undefined;
+  const result = updateConversationSettings(req.params.id, session.uid, { defaultTtlSec, title });
+  if (result.error || !result.conversation) {
+    return res.status(403).json({ error: result.error || 'Could not update settings.' });
+  }
+  const members = getConversationMemberUids(result.conversation.id);
+  broadcastToUids(members, 'inbox:refresh', { conversationId: result.conversation.id });
+  res.json({ conversation: result.conversation });
+});
+
+app.get('/api/inbox/conversations/:id/messages', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  if (!isConversationMember(req.params.id, session.uid)) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+  const messages = listConversationMessages(req.params.id, session.uid);
+  const conversation = hydrateConversation(req.params.id, session.uid);
+  res.json({ messages, conversation });
+});
+
+app.post('/api/inbox/conversations/:id/messages', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const conversationId = req.params.id;
+  if (!isConversationMember(conversationId, session.uid)) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
+
+  const kind = req.body?.kind === 'image' ? 'image' : 'text';
+  const encrypted = Boolean(req.body?.encrypted);
+  const ciphertext = typeof req.body?.ciphertext === 'string' ? req.body.ciphertext : '';
+  const iv = typeof req.body?.iv === 'string' ? req.body.iv : null;
+  const viewOnce = Boolean(req.body?.viewOnce);
+  const ttlSec = Math.max(0, Math.min(60 * 60 * 24 * 30, Number(req.body?.ttlSec) || 0));
+
+  if (!ciphertext || ciphertext.length > 6_000_000) {
+    return res.status(400).json({ error: 'Message content is empty or exceeds size limit.' });
+  }
+
+  const message = insertInboxMessage({
+    conversationId,
+    senderUid: session.uid,
+    senderName: session.displayName,
+    kind,
+    encrypted,
+    ciphertext,
+    iv,
+    viewOnce,
+    ttlSec,
+  });
+
+  const members = getConversationMemberUids(conversationId);
+  broadcastToUids(members, 'inbox:new_message', { conversationId, message });
+
+  // If this is the Live Support thread, reply automatically after a brief realistic delay
+  if (conversationId.startsWith('sup-')) {
+    const replyText = buildLiveSupportReply(kind === 'image' ? 'Sent screenshot image' : ciphertext);
+    setTimeout(() => {
+      const replyMsg = insertInboxMessage({
+        conversationId,
+        senderUid: 'ST-SUPPORT',
+        senderName: 'StreamLive Live Support',
+        kind: 'text',
+        encrypted: false,
+        ciphertext: replyText,
+        iv: null,
+        viewOnce: false,
+        ttlSec,
+      });
+      broadcastToUids(members, 'inbox:new_message', { conversationId, message: replyMsg });
+    }, 650);
+  }
+
+  res.status(201).json({ message });
+});
+
+app.post('/api/inbox/messages/:id/consume', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const result = consumeViewOnceMessage(req.params.id, session.uid);
+  if (!result.ok || !result.conversationId) {
+    return res.status(410).json({ error: result.error || 'Message already opened and vanished.' });
+  }
+  const members = getConversationMemberUids(result.conversationId);
+  broadcastToUids(members, 'inbox:consumed', {
+    conversationId: result.conversationId,
+    messageId: req.params.id,
+    consumedBy: session.displayName,
+  });
+  res.json({
+    ok: true,
+    kind: result.kind,
+    encrypted: result.encrypted,
+    ciphertext: result.ciphertext,
+    iv: result.iv,
+  });
+});
+
+app.delete('/api/inbox/messages/:id', (req, res) => {
+  const session = requireAuth(req, res);
+  if (!session) return;
+  const result = deleteInboxMessage(req.params.id, session.uid);
+  if (!result.ok || !result.conversationId) {
+    return res.status(403).json({ error: 'Only the sender can delete this message.' });
+  }
+  const members = getConversationMemberUids(result.conversationId);
+  broadcastToUids(members, 'inbox:deleted', {
+    conversationId: result.conversationId,
+    messageId: req.params.id,
+  });
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // WebSocket Server: Live Rooms + Server-Authoritative Multiplayer Games
 // ---------------------------------------------------------------------------
 
@@ -1159,6 +1398,18 @@ wss.on('connection', (ws) => {
       const result = gameEngine.registerFpsHit(roomId, meta.session.uid, targetUid, headshot);
       if (result.error) sendWs(ws, 'ws:error', { message: result.error });
       else if (result.room) broadcastAll('game:state', result.room);
+      return;
+    }
+
+    if (event === 'inbox:typing') {
+      const conversationId = typeof payload.conversationId === 'string' ? payload.conversationId : '';
+      if (!meta.session || !conversationId || !isConversationMember(conversationId, meta.session.uid)) return;
+      const members = getConversationMemberUids(conversationId).filter((u) => u !== meta.session!.uid);
+      broadcastToUids(members, 'inbox:typing', {
+        conversationId,
+        uid: meta.session.uid,
+        displayName: meta.session.displayName,
+      });
     }
   });
 

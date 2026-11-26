@@ -237,3 +237,44 @@ export interface DeviceInfo {
   screenWidth: number;
   screenHeight: number;
 }
+
+export type ConversationType = 'dm' | 'group' | 'support';
+
+export interface InboxMember {
+  uid: string;
+  displayName: string;
+  role: 'owner' | 'admin' | 'member';
+  joinedAt: number;
+}
+
+export interface InboxConversation {
+  id: string;
+  type: ConversationType;
+  title: string;
+  creatorUid: string;
+  inviteCode?: string;
+  e2eeEnabled: boolean;
+  defaultTtlSec: number;
+  members: InboxMember[];
+  unreadCount: number;
+  lastMessagePreview?: string;
+  lastMessageAt: number;
+  updatedAt: number;
+}
+
+export interface InboxMessage {
+  id: string;
+  conversationId: string;
+  senderUid: string;
+  senderName: string;
+  kind: 'text' | 'image' | 'system';
+  encrypted: boolean;
+  ciphertext: string | null;
+  iv: string | null;
+  viewOnce: boolean;
+  consumed: boolean;
+  ttlSec: number;
+  expiresAt: number | null;
+  createdAt: number;
+}
+

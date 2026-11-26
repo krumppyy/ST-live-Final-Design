@@ -13,6 +13,7 @@ import {
   Gift,
   Heart,
   Maximize2,
+  MessageCircle,
   Mic,
   MicOff,
   RotateCcw,
@@ -43,6 +44,7 @@ interface LiveRoomViewProps {
   stream: Livestream;
   onBack: () => void;
   onOpenGame: (gameRoomId: string) => void;
+  onMessageHost?: (hostUid: string) => void;
   onRequireLogin: () => void;
 }
 
@@ -67,6 +69,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   stream,
   onBack,
   onOpenGame,
+  onMessageHost,
   onRequireLogin,
 }) => {
   const { session, streams, games, sendWsEvent, subscribeWs, pushToast, t } = useApp();
@@ -321,6 +324,24 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             <span>{isFollowing ? 'Following' : 'Follow Host'}</span>
             <span className="font-mono-nums opacity-80">{followers.length}</span>
           </button>
+
+          {onMessageHost && session?.uid !== liveStream.hostUid && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!session) {
+                  onRequireLogin();
+                  return;
+                }
+                onMessageHost(liveStream.hostUid);
+              }}
+              title="1-on-1 Encrypted Message"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-emerald-500/60 cursor-pointer"
+            >
+              <MessageCircle className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">DM</span>
+            </button>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

@@ -1,5 +1,6 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
 import { CameraStudio } from './components/CameraStudio';
+import { InboxHub } from './components/InboxHub';
 import { LibraryView } from './components/LibraryView';
 import { LiveHome } from './components/LiveHome';
 import { LiveRoomView } from './components/LiveRoomView';
@@ -53,17 +54,24 @@ const StreamLiveShell: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>('live');
   const [activeStream, setActiveStream] = useState<Livestream | null>(null);
   const [targetGameId, setTargetGameId] = useState<string | null>(null);
+  const [targetDmUid, setTargetDmUid] = useState<string | null>(null);
+  const [targetJoinCode, setTargetJoinCode] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const deepLinkAppliedRef = useRef(false);
 
-  // Resolve directly shared camera live feed links (?room=<id> or ?live=cam)
+  // Resolve directly shared links (?room=<id>, ?live=cam, or ?joinGroup=<code>)
   useEffect(() => {
     if (deepLinkAppliedRef.current) return;
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     const liveParam = params.get('live');
-    if (roomParam && streams.length > 0) {
+    const joinGroupParam = params.get('joinGroup');
+    if (joinGroupParam) {
+      deepLinkAppliedRef.current = true;
+      setTargetJoinCode(joinGroupParam);
+      setActiveTab('inbox');
+    } else if (roomParam && streams.length > 0) {
       const matched = streams.find((s) => s.id === roomParam);
       if (matched) {
         deepLinkAppliedRef.current = true;
@@ -110,6 +118,11 @@ const StreamLiveShell: React.FC = () => {
               stream={activeStream}
               onBack={() => setActiveStream(null)}
               onOpenGame={handleOpenGameFromStream}
+              onMessageHost={(hostUid) => {
+                setTargetDmUid(hostUid);
+                setActiveStream(null);
+                setActiveTab('inbox');
+              }}
               onRequireLogin={() => setLoginOpen(true)}
             />
           ) : (
@@ -136,6 +149,18 @@ const StreamLiveShell: React.FC = () => {
 
         {activeTab === 'library' && (
           <LibraryView onOpenCamera={() => handleSelectTab('camera')} />
+        )}
+
+        {activeTab === 'inbox' && (
+          <InboxHub
+            initialDmUid={targetDmUid}
+            initialJoinCode={targetJoinCode}
+            onConsumeDeepLink={() => {
+              setTargetDmUid(null);
+              setTargetJoinCode(null);
+            }}
+            onRequireLogin={() => setLoginOpen(true)}
+          />
         )}
 
         {activeTab === 'workspace' && (
