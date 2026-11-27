@@ -51,6 +51,7 @@ import {
 } from '../lib/cameraEngine';
 import { useGimbal, type GimbalMode } from '../lib/gimbalEngine';
 import { playShutterSfx } from '../lib/sfx';
+import { getStudioPreset, type ArOverlayId } from '../lib/studioPresets';
 import type { GameType, Livestream } from '../types';
 import { CollageMakerModal } from './CollageMakerModal';
 
@@ -78,7 +79,7 @@ type DrawerTab =
 
 const SHUTTER_SPEEDS = ['1/30', '1/60', '1/125', '1/250', '1/500', '1/1000', '1/4000'];
 const FLASH_POWERS = ['1/1', '1/2', '1/4', '1/8', '1/16', '1/32', '1/64', '1/128'];
-const REEL_DURATIONS = [15, 30, 60, 90] as const;
+const REEL_DURATIONS = [15, 20, 30, 60, 90] as const;
 
 export const CameraStudio: React.FC<CameraStudioProps> = ({
   onBack,
@@ -93,6 +94,11 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     mediaLibrary,
     addMediaAsset,
     removeMediaAsset,
+    activeStudioPresetId,
+    studioPresetAppliedAt,
+    studioPresetOverrides,
+    studioOverlayCaption,
+    setStudioOverlayCaption,
   } = useApp();
 
   // Core Mode & Compact Drawer State
@@ -101,9 +107,9 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [drawer, setDrawer] = useState<DrawerTab>('none');
   const [collageOpen, setCollageOpen] = useState(false);
 
-  // Aspect Ratio (Pictures, Videos & Reels)
+  // Aspect Ratio (Pictures, Videos & Reels — includes 20s Quick Clip preset G-052)
   const [aspectRatio, setAspectRatio] = useState<AspectRatioId>('full');
-  const [reelDuration, setReelDuration] = useState<15 | 30 | 60 | 90>(30);
+  const [reelDuration, setReelDuration] = useState<15 | 20 | 30 | 60 | 90>(20);
   const [reelSpeed, setReelSpeed] = useState<0.5 | 1 | 1.5 | 2>(1);
 
   // Camera Hardware & Multi-Lens Switching
@@ -151,16 +157,25 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [filterCat, setFilterCat] = useState<FilterCategory>('all');
   const [presetId, setPresetId] = useState<string>('pure');
 
-  // Beauty (Ladies / Gents), Face Tuning, Body Slimming & Skin Brightening (Auto / Manual)
+  // Beauty (Ladies / Gents), Face Studio 11-Tune, Body Slimming, Skin Brighten & AR/Stage Overlays (G-047, G-048, G-050, G-051)
   const [beautyProfile, setBeautyProfile] = useState<BeautyProfile>('off');
+  const [beautySubTab, setBeautySubTab] = useState<'face' | 'stage'>('face');
   const [faceSmooth, setFaceSmooth] = useState(0);
   const [faceGlow, setFaceGlow] = useState(0);
   const [faceSlim, setFaceSlim] = useState(0);
+  const [faceJaw, setFaceJaw] = useState(0);
+  const [faceChin, setFaceChin] = useState(0);
   const [eyeBright, setEyeBright] = useState(0);
   const [skinTone, setSkinTone] = useState(0);
+  const [faceRosy, setFaceRosy] = useState(0);
+  const [faceVignette, setFaceVignette] = useState(0);
   const [skinBrightAuto, setSkinBrightAuto] = useState(false);
   const [skinBrightManual, setSkinBrightManual] = useState(0); // 0 .. 100 (for dark-tone brightening)
   const [bodySlim, setBodySlim] = useState(0);
+  const [arOverlay, setArOverlay] = useState<ArOverlayId>('none');
+  const [screenShareActive, setScreenShareActive] = useState(false);
+  const screenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
 
   // Audio BNC, ANC & Multi-Source Mic Hub (Auto, Wired, Bluetooth, Wireless, Wi-Fi)
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -203,13 +218,13 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const pinchStartZoomRef = useRef<number>(1);
   const draggingPipRef = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
 
-  // Direct Go Live Form State
+  // Direct Go Live Form State (explicit opt-in consent defaults to false per G-044)
   const [liveTitle, setLiveTitle] = useState('');
   const [liveCategory, setLiveCategory] = useState<Livestream['category']>('solo');
   const [liveSeats, setLiveSeats] = useState(6);
   const [liveGameType, setLiveGameType] = useState<'' | GameType>('fps');
   const [livePin, setLivePin] = useState('');
-  const [liveConsent, setLiveConsent] = useState(true);
+  const [liveConsent, setLiveConsent] = useState(false);
   const [launchingLive, setLaunchingLive] = useState(false);
   const [lastLiveRoomId, setLastLiveRoomId] = useState<string | null>(null);
 
@@ -252,6 +267,80 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     }
     grainCanvasRef.current = gc;
   }, []);
+
+  // Auto-apply active Studio Quick-Preset from Studio Console (zero overlap, 1:1 hardware/room sync)
+  useEffect(() => {
+    const sp = getStudioPreset(activeStudioPresetId);
+    if (!sp) return;
+    setResolution((studioPresetOverrides.resolution as ResolutionOption) || sp.camera.resolution);
+    setFps((studioPresetOverrides.fps as FpsOption) || sp.camera.fps);
+    setAspectRatio((studioPresetOverrides.aspect as AspectRatioId) || sp.camera.aspect);
+    setPresetId(studioPresetOverrides.filterId || sp.camera.filterId);
+    setAncEnabled(studioPresetOverrides.ancEnabled ?? sp.hardware.ancEnabled);
+    setBncEnabled(studioPresetOverrides.bncEnabled ?? sp.hardware.bncEnabled);
+    setMicSourceType(sp.hardware.micSource);
+    setFlashMode(sp.hardware.flashMode);
+    gimbal.setMode(sp.hardware.gimbalMode);
+    setMacroTune(sp.camera.macroMode ? 'macro' : 'off');
+    if (sp.camera.dualCamera) setCamMode('dual');
+    setArOverlay((studioPresetOverrides.arOverlay as ArOverlayId) || sp.camera.arOverlay);
+    if (sp.camera.beautyOn) {
+      setBeautyProfile('ladies');
+      setFaceSmooth(sp.camera.faceStudio.smooth);
+      setFaceGlow(sp.camera.faceStudio.brighten);
+      setSkinBrightManual(sp.camera.faceStudio.fairGlow);
+      setFaceSlim(sp.camera.faceStudio.slim);
+      setFaceJaw(sp.camera.faceStudio.jaw);
+      setFaceChin(sp.camera.faceStudio.chin);
+      setEyeBright(sp.camera.faceStudio.eyes);
+      setSkinTone(Math.max(-25, Math.min(25, sp.camera.faceStudio.warmth)));
+      setFaceRosy(sp.camera.faceStudio.rosy);
+      setFaceVignette(sp.camera.faceStudio.vignette);
+    }
+    setLiveTitle(sp.liveRoom.defaultTitle);
+    setLiveCategory(sp.liveRoom.category);
+    setLiveSeats(sp.liveRoom.maxSeats);
+    setLiveGameType(sp.liveRoom.gameType);
+    if (studioPresetOverrides.pin) setLivePin(studioPresetOverrides.pin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeStudioPresetId, studioPresetAppliedAt]);
+
+  // Clean up Screen-Share stream on unmount
+  useEffect(() => {
+    return () => {
+      screenStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+    };
+  }, []);
+
+  const toggleScreenShareSource = useCallback(async () => {
+    if (screenShareActive) {
+      screenStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+      screenStreamRef.current = null;
+      setScreenShareActive(false);
+      pushToast('Screen-share source stopped.', 'info');
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      pushToast('Screen capture is not supported in this browser.', 'error');
+      return;
+    }
+    try {
+      const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      screenStreamRef.current = display;
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = display;
+        await screenVideoRef.current.play().catch(() => {});
+      }
+      display.getVideoTracks()[0]?.addEventListener('ended', () => {
+        screenStreamRef.current = null;
+        setScreenShareActive(false);
+      });
+      setScreenShareActive(true);
+      pushToast('Screen-Share active in viewfinder (Camera PiP overlaid).', 'success');
+    } catch {
+      pushToast('Screen capture cancelled.', 'info');
+    }
+  }, [screenShareActive, pushToast]);
 
   // Enumerate Cameras & Microphones
   const refreshDevices = useCallback(async () => {
@@ -802,21 +891,26 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
           ctx.fillStyle = '#000000';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-          // Determine Primary & Secondary sources (supports tappable camera swap + custom B-Roll footage!)
-          const primaryCamSrc: HTMLVideoElement | HTMLImageElement | null = videoRef.current;
+          // Determine Primary & Secondary sources (supports Screen-Share + Facecam PiP, tappable camera swap + custom B-Roll!)
+          const primaryCamSrc: HTMLVideoElement | HTMLImageElement | null =
+            screenShareActive && screenVideoRef.current && screenVideoRef.current.readyState >= 2
+              ? screenVideoRef.current
+              : videoRef.current;
           const secondarySrc: HTMLVideoElement | HTMLImageElement | null =
-            brollMode === 'broll' && brollUrl
-              ? brollIsVideo
-                ? brollVideoRef.current
-                : brollImgRef.current
-              : secondVideoRef.current && secondVideoRef.current.readyState >= 2
-                ? secondVideoRef.current
-                : videoRef.current;
+            screenShareActive
+              ? videoRef.current
+              : brollMode === 'broll' && brollUrl
+                ? brollIsVideo
+                  ? brollVideoRef.current
+                  : brollImgRef.current
+                : secondVideoRef.current && secondVideoRef.current.readyState >= 2
+                  ? secondVideoRef.current
+                  : videoRef.current;
 
           const mainSrc = camMode === 'dual' && dualSwapped ? secondarySrc : primaryCamSrc;
           const subSrc = camMode === 'dual' && dualSwapped ? primaryCamSrc : secondarySrc;
-          const mainIsBroll = camMode === 'dual' && dualSwapped && brollMode === 'broll';
-          const subIsBroll = camMode === 'dual' && !dualSwapped && brollMode === 'broll';
+          const mainIsBroll = (camMode === 'dual' && dualSwapped && brollMode === 'broll') || screenShareActive;
+          const subIsBroll = camMode === 'dual' && !dualSwapped && brollMode === 'broll' && !screenShareActive;
 
           if (camMode === 'dual' && dualLayout === 'split') {
             const halfH = Math.floor(frame.h / 2);
@@ -837,7 +931,7 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
           } else {
             drawVisualSource(mainSrc, frame.x, frame.y, frame.w, frame.h, mainIsBroll ? false : mirrored, effectiveZoom, true, true);
 
-            if (camMode === 'dual' && dualLayout === 'pip') {
+            if ((camMode === 'dual' && dualLayout === 'pip') || screenShareActive) {
               const { px, py, pipW, pipH } = getPipCanvasRect(frame);
               const rad = pipAspect === 'circle' ? Math.min(pipW, pipH) / 2 : 14;
               ctx.save();
@@ -850,8 +944,8 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
                 py,
                 pipW,
                 pipH,
-                subIsBroll ? false : !mirrored,
-                subIsBroll ? 1 : Math.max(1.25, effectiveZoom),
+                subIsBroll ? false : screenShareActive ? mirrored : !mirrored,
+                subIsBroll ? 1 : screenShareActive ? 1 : Math.max(1.25, effectiveZoom),
                 false,
                 false
               );
@@ -862,6 +956,92 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
               ctx.roundRect(px, py, pipW, pipH, rad);
               ctx.stroke();
             }
+          }
+
+          // Subtle Face Studio rosy blush & cinematic vignette (G-047)
+          if (faceRosy > 4) {
+            ctx.save();
+            ctx.fillStyle = `rgba(255, 130, 160, ${(faceRosy / 100) * 0.12})`;
+            ctx.fillRect(frame.x, frame.y, frame.w, frame.h);
+            ctx.restore();
+          }
+          if (faceVignette > 4) {
+            const cx = frame.x + frame.w / 2;
+            const cy = frame.y + frame.h / 2;
+            const grad = ctx.createRadialGradient(cx, cy, Math.min(frame.w, frame.h) * 0.28, cx, cy, Math.max(frame.w, frame.h) * 0.7);
+            grad.addColorStop(0, 'rgba(0,0,0,0)');
+            grad.addColorStop(1, `rgba(0,0,0,${(faceVignette / 100) * 0.58})`);
+            ctx.fillStyle = grad;
+            ctx.fillRect(frame.x, frame.y, frame.w, frame.h);
+          }
+
+          // Live AR Overlays (Snow, Confetti, Studio Frame, Arena HUD Corners — G-048)
+          if (arOverlay === 'snow' || arOverlay === 'confetti') {
+            ctx.save();
+            const count = arOverlay === 'snow' ? 28 : 34;
+            const colors = ['#D90429', '#A3E635', '#E8C86A', '#38bdf8', '#f472b6'];
+            for (let i = 0; i < count; i++) {
+              const seed = i * 97.3;
+              const px = frame.x + (((seed * 13.7 + Math.sin(time * 0.0012 + i) * 28) % frame.w) + frame.w) % frame.w;
+              const py = frame.y + (((time * (0.045 + (i % 5) * 0.015) + seed * 19) % frame.h) + frame.h) % frame.h;
+              if (arOverlay === 'snow') {
+                ctx.fillStyle = 'rgba(255,255,255,0.72)';
+                ctx.beginPath();
+                ctx.arc(px, py, 2 + (i % 4), 0, Math.PI * 2);
+                ctx.fill();
+              } else {
+                ctx.fillStyle = colors[i % colors.length];
+                ctx.fillRect(px, py, 7, 4);
+              }
+            }
+            ctx.restore();
+          } else if (arOverlay === 'studio_frame') {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(232,200,106,0.55)';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(frame.x + 14, frame.y + 14, frame.w - 28, frame.h - 28);
+            ctx.restore();
+          } else if (arOverlay === 'neon_corner') {
+            ctx.save();
+            ctx.strokeStyle = '#A3E635';
+            ctx.lineWidth = 3;
+            const c = 26;
+            const m = 18;
+            const corners: Array<[number, number, number, number]> = [
+              [frame.x + m, frame.y + m, 1, 1],
+              [frame.x + frame.w - m, frame.y + m, -1, 1],
+              [frame.x + m, frame.y + frame.h - m, 1, -1],
+              [frame.x + frame.w - m, frame.y + frame.h - m, -1, -1],
+            ];
+            for (const [cx, cy, dx, dy] of corners) {
+              ctx.beginPath();
+              ctx.moveTo(cx + dx * c, cy);
+              ctx.lineTo(cx, cy);
+              ctx.lineTo(cx, cy + dy * c);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+
+          // Live Lower-Third Caption Overlay (G-051)
+          if (studioOverlayCaption.trim()) {
+            ctx.save();
+            const text = studioOverlayCaption.trim().slice(0, 72);
+            const barH = Math.max(30, Math.round(frame.h * 0.055));
+            const barW = Math.min(frame.w - 36, Math.max(220, text.length * 10.5 + 36));
+            const bx = frame.x + 18;
+            const by = frame.y + frame.h - barH - 96;
+            ctx.fillStyle = 'rgba(10, 12, 16, 0.78)';
+            ctx.beginPath();
+            ctx.roundRect(bx, by, barW, barH, 10);
+            ctx.fill();
+            ctx.fillStyle = '#D90429';
+            ctx.fillRect(bx, by + 6, 4, barH - 12);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `600 ${Math.max(12, Math.round(barH * 0.44))}px system-ui, sans-serif`;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, bx + 14, by + barH / 2);
+            ctx.restore();
           }
 
           // Subtle aspect ratio crop hairline when not full-screen
@@ -898,11 +1078,18 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     faceSmooth,
     faceGlow,
     faceSlim,
+    faceJaw,
+    faceChin,
+    faceRosy,
+    faceVignette,
     eyeBright,
     skinTone,
     skinBrightAuto,
     skinBrightManual,
     bodySlim,
+    arOverlay,
+    screenShareActive,
+    studioOverlayCaption,
     zoom,
     macroTune,
     mirrored,
@@ -1561,9 +1748,10 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 h-[100dvh] w-full overflow-hidden bg-black text-white select-none">
-      {/* Hidden hardware & B-roll media elements */}
+      {/* Hidden hardware, screen-share & B-roll media elements */}
       <video ref={videoRef} playsInline muted className="hidden" />
       <video ref={secondVideoRef} playsInline muted className="hidden" />
+      <video ref={screenVideoRef} playsInline muted className="hidden" />
       <video ref={brollVideoRef} playsInline muted loop className="hidden" />
       <img ref={brollImgRef} alt="" className="hidden" />
       <input ref={ssdImportRef} type="file" accept="image/*,video/*" multiple onChange={handleImportFromSsd} className="hidden" />
@@ -2021,34 +2209,31 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
         </div>
       )}
 
-      {/* 2. BEAUTY (LADIES / GENTS), FACE TUNING, BODY SLIMMING & SKIN BRIGHTEN (AUTO/MANUAL) */}
+      {/* 2. FACE STUDIO 11-TUNE + LIVE AR OVERLAYS, SCREEN-SHARE & LOWER-THIRD CAPTION (G-047, G-048, G-050, G-051) */}
       {drawer === 'beauty' && (
         <div
           onClick={(e) => e.stopPropagation()}
-          className="absolute inset-x-2.5 sm:inset-x-6 bottom-36 sm:bottom-40 z-30 mx-auto max-w-md rounded-2xl border border-white/15 bg-black/80 p-3 backdrop-blur-xl space-y-2.5"
+          className="absolute inset-x-2.5 sm:inset-x-6 bottom-36 sm:bottom-40 z-30 mx-auto max-w-md rounded-2xl border border-white/15 bg-black/84 p-3 backdrop-blur-xl space-y-2.5 max-h-[46vh] overflow-y-auto no-scrollbar"
         >
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1">
-              {(['off', 'ladies', 'gents'] as BeautyProfile[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => selectBeautyProfile(p)}
-                  className={`h-7 rounded-full px-2.5 text-[10px] font-semibold capitalize cursor-pointer ${
-                    beautyProfile === p ? 'bg-[#D90429] text-white' : 'bg-white/10 text-white/80'
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
               <button
                 type="button"
-                onClick={() => setSkinBrightAuto((v) => !v)}
-                className={`h-7 rounded-full px-2.5 text-[10px] font-semibold cursor-pointer ${
-                  skinBrightAuto ? 'bg-[#E8C86A] text-black' : 'bg-white/10 text-white/80'
+                onClick={() => setBeautySubTab('face')}
+                className={`h-7 rounded-full px-2.5 text-[10px] font-bold cursor-pointer ${
+                  beautySubTab === 'face' ? 'bg-[#A3E635] text-black' : 'bg-white/10 text-white/80'
                 }`}
               >
-                Auto Fair
+                Face 11-Tune
+              </button>
+              <button
+                type="button"
+                onClick={() => setBeautySubTab('stage')}
+                className={`h-7 rounded-full px-2.5 text-[10px] font-bold cursor-pointer ${
+                  beautySubTab === 'stage' ? 'bg-[#E8C86A] text-black' : 'bg-white/10 text-white/80'
+                }`}
+              >
+                AR · Screen · Caption
               </button>
             </div>
             <button type="button" onClick={() => setDrawer('none')} className="p-1 text-white/60 hover:text-white cursor-pointer">
@@ -2056,32 +2241,124 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
-            {[
-              { label: 'Fair Lift', val: skinBrightManual, min: 0, max: 100, set: setSkinBrightManual },
-              { label: 'Smooth', val: faceSmooth, min: 0, max: 100, set: setFaceSmooth },
-              { label: 'Glow', val: faceGlow, min: 0, max: 100, set: setFaceGlow },
-              { label: 'Face Slim', val: faceSlim, min: 0, max: 100, set: setFaceSlim },
-              { label: 'Body Slim', val: bodySlim, min: 0, max: 100, set: setBodySlim },
-              { label: 'Eyes', val: eyeBright, min: 0, max: 100, set: setEyeBright },
-              { label: 'Skin Tone', val: skinTone, min: -25, max: 25, set: setSkinTone },
-            ].map((s) => (
-              <label key={s.label} className="space-y-0.5">
-                <div className="flex justify-between text-white/80">
-                  <span>{s.label}</span>
-                  <span className="font-mono-nums text-[#E8C86A]">{s.val}</span>
+          {beautySubTab === 'face' ? (
+            <>
+              <div className="flex flex-wrap items-center gap-1">
+                {(['off', 'ladies', 'gents'] as BeautyProfile[]).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => selectBeautyProfile(p)}
+                    className={`h-6 rounded-full px-2.5 text-[10px] font-semibold capitalize cursor-pointer ${
+                      beautyProfile === p ? 'bg-[#D90429] text-white' : 'bg-white/10 text-white/80'
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSkinBrightAuto((v) => !v)}
+                  className={`h-6 rounded-full px-2.5 text-[10px] font-semibold cursor-pointer ${
+                    skinBrightAuto ? 'bg-[#E8C86A] text-black' : 'bg-white/10 text-white/80'
+                  }`}
+                >
+                  Auto Fair
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-[10px]">
+                {[
+                  { label: 'Fair Lift', val: skinBrightManual, min: 0, max: 100, set: setSkinBrightManual },
+                  { label: 'Smooth', val: faceSmooth, min: 0, max: 100, set: setFaceSmooth },
+                  { label: 'Glow', val: faceGlow, min: 0, max: 100, set: setFaceGlow },
+                  { label: 'Face Slim', val: faceSlim, min: 0, max: 100, set: setFaceSlim },
+                  { label: 'Jaw Sculpt', val: faceJaw, min: 0, max: 100, set: setFaceJaw },
+                  { label: 'Chin Line', val: faceChin, min: 0, max: 100, set: setFaceChin },
+                  { label: 'Body Slim', val: bodySlim, min: 0, max: 100, set: setBodySlim },
+                  { label: 'Eyes Bright', val: eyeBright, min: 0, max: 100, set: setEyeBright },
+                  { label: 'Warm Tone', val: skinTone, min: -25, max: 25, set: setSkinTone },
+                  { label: 'Rosy Blush', val: faceRosy, min: 0, max: 100, set: setFaceRosy },
+                  { label: 'Vignette', val: faceVignette, min: 0, max: 100, set: setFaceVignette },
+                ].map((s) => (
+                  <label key={s.label} className="space-y-0.5">
+                    <div className="flex justify-between text-white/80">
+                      <span>{s.label}</span>
+                      <span className="font-mono-nums text-[#E8C86A]">{s.val}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={s.min}
+                      max={s.max}
+                      value={s.val}
+                      onChange={(e) => s.set(Number(e.target.value))}
+                      className="w-full h-1 accent-[#A3E635] cursor-pointer"
+                    />
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="space-y-2.5 text-[11px]">
+              <div className="space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  Live AR Layer
+                </span>
+                <div className="grid grid-cols-5 gap-1 text-[10px]">
+                  {(
+                    [
+                      ['none', 'Off'],
+                      ['studio_frame', 'Frame'],
+                      ['neon_corner', 'HUD'],
+                      ['snow', 'Snow'],
+                      ['confetti', 'Confetti'],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setArOverlay(id)}
+                      className={`h-7 rounded-lg font-semibold cursor-pointer ${
+                        arOverlay === id ? 'bg-[#A3E635] text-black' : 'bg-white/10 text-white/80'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-white/15 bg-white/5 px-2.5 py-2">
+                <div>
+                  <div className="text-[11px] font-semibold text-white">Screen-Share Source (PiP)</div>
+                  <div className="text-[9px] text-white/60">Stream your display with camera facecam overlay</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleScreenShareSource}
+                  className={`h-7 rounded-lg px-2.5 text-[10px] font-bold cursor-pointer ${
+                    screenShareActive ? 'bg-[#D90429] text-white' : 'bg-white/15 text-white'
+                  }`}
+                >
+                  {screenShareActive ? 'Stop Screen' : 'Share Screen'}
+                </button>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                  Lower-Third On-Screen Caption
+                </span>
                 <input
-                  type="range"
-                  min={s.min}
-                  max={s.max}
-                  value={s.val}
-                  onChange={(e) => s.set(Number(e.target.value))}
-                  className="w-full h-1 accent-[#A3E635] cursor-pointer"
+                  type="text"
+                  maxLength={72}
+                  value={studioOverlayCaption}
+                  onChange={(e) => setStudioOverlayCaption(e.target.value)}
+                  placeholder="Type a live banner or topic cue..."
+                  className="h-8 w-full rounded-lg border border-white/15 bg-white/10 px-2.5 text-xs text-white placeholder:text-white/45 outline-none focus:border-[#A3E635]"
                 />
               </label>
-            ))}
-          </div>
+            </div>
+          )}
         </div>
       )}
 

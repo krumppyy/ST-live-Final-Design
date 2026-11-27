@@ -41,6 +41,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { countryFlag } from '../lib/countries';
 import { useGimbal } from '../lib/gimbalEngine';
+import { fetchRtcConfig } from '../lib/rtcConfig';
 import { playDiceSfx, playStepSfx } from '../lib/sfx';
 import { parseStickerCode, STICKER_PACKS } from '../lib/stickers';
 import type {
@@ -130,6 +131,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [duel, setDuel] = useState<DiceDuelState | undefined>(liveStream.duel);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [mutedUids, setMutedUids] = useState<string[]>([]);
+  const [slowModeSec, setSlowModeSec] = useState<number>(0);
+  const [coHosts, setCoHosts] = useState<Array<{ uid: string; displayName: string; status: 'invited' | 'live'; joinedAt: number }>>([]);
+  const [coHostInviteUid, setCoHostInviteUid] = useState<string>('');
+  const [rtcTurnReady, setRtcTurnReady] = useState<boolean>(false);
   const [followersCount, setFollowersCount] = useState<number>(liveStream.followerCount ?? 2);
   const [draft, setDraft] = useState('');
   const [pkTarget, setPkTarget] = useState<'host' | 'challenger'>('host');
@@ -148,8 +153,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [pinError, setPinError] = useState('');
   const [pinBusy, setPinBusy] = useState(false);
 
-  // Celebratory FX overlays (Nova Burst 500 & Crowd Cut)
-  const [novaFlash, setNovaFlash] = useState<{ sender: string; gift: string; coins: number } | null>(null);
+  // Celebratory FX overlays (Nova Burst 500 & Crowd Confetti/Pulse FX — G-013)
+  const [novaFlash, setNovaFlash] = useState<{ sender: string; gift: string; coins: number; fxKind?: 'confetti' | 'pulse' | 'nova' } | null>(null);
 
   // Compact Popovers (Zero UI Clutter)
   const [activePopover, setActivePopover] = useState<
@@ -283,6 +288,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     return () => clearInterval(tickTimer);
   }, [session?.token, liveStream.id, pinUnlocked, authFetch, setSession]);
 
+  // Load dynamic WebRTC STUN/TURN config (G-035)
+  useEffect(() => {
+    fetchRtcConfig().then((cfg) => setRtcTurnReady(cfg.turnConfigured)).catch(() => {});
+  }, []);
+
   // WebSocket Room Subscriptions
   useEffect(() => {
     sendWsEvent('room:join', { roomId: liveStream.id });
@@ -296,6 +306,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           messages: ChatMessage[];
           mutedUids: string[];
           followers?: string[];
+          slowModeSec?: number;
+          coHosts?: Array<{ uid: string; displayName: string; status: 'invited' | 'live'; joinedAt: number }>;
         };
         if (data.roomId === liveStream.id) {
           setSeats(data.seats);
@@ -303,14 +315,17 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           if (data.duel) setDuel(data.duel);
           setMessages(data.messages);
           setMutedUids(data.mutedUids || []);
+          if (typeof data.slowModeSec === 'number') setSlowModeSec(data.slowModeSec);
+          if (Array.isArray(data.coHosts)) setCoHosts(data.coHosts);
           if (data.followers) setFollowersCount(Math.max(data.followers.length, liveStream.followerCount ?? 0));
         }
       } else if (event === 'room:chat_msg' && payload) {
         const msg = payload as ChatMessage;
         if (msg.roomId === liveStream.id) {
           setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev.slice(-199), msg]));
-          if (msg.gift?.novaBurst || (msg.gift && msg.gift.coins >= 200)) {
-            setNovaFlash({ sender: msg.displayName, gift: msg.gift.name, coins: msg.gift.coins });
+          if (msg.gift?.novaBurst || (msg.gift && msg.gift.coins >= 100)) {
+            const fxKind = msg.gift.novaBurst ? 'nova' : msg.gift.coins >= 200 ? 'confetti' : 'pulse';
+            setNovaFlash({ sender: msg.displayName, gift: msg.gift.name, coins: msg.gift.coins, fxKind });
             setTimeout(() => setNovaFlash(null), 2600);
           }
         }
@@ -554,6 +569,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
 
   const handleEndBroadcast = async () => {
     if (!session) return;
+    // Always stop local camera/media tracks immediately on End Broadcast (G-044)
+    mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+    mediaStreamRef.current = null;
+    setCameraActive(false);
     const res = await authFetch(`/api/rooms/${encodeURIComponent(liveStream.id)}/end`, {
       method: 'POST',
     });
@@ -783,6 +802,26 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           >
             <Flag className="h-3.5 w-3.5" />
           </button>
+
+          {canModChat && (
+            <button
+              type="button"
+              onClick={() => {
+                const cycle = [0, 3, 5, 10];
+                const next = cycle[(cycle.indexOf(slowModeSec) + 1) % cycle.length];
+                sendWsEvent('room:slow_mode', { roomId: liveStream.id, seconds: next });
+                pushToast(next > 0 ? `Chat Slow Mode: ${next}s` : 'Chat Slow Mode disabled', 'info');
+              }}
+              title="Toggle Chat Slow Mode"
+              className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
+                slowModeSec > 0
+                  ? 'border-amber-400/60 bg-amber-500/15 text-amber-300'
+                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)]'
+              }`}
+            >
+              <span className="font-mono-nums">{slowModeSec > 0 ? `Slow ${slowModeSec}s` : 'Slow Off'}</span>
+            </button>
+          )}
 
           {isHostOrMod && (
             <>
@@ -1296,13 +1335,34 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                 />
               )}
 
-              {/* Celebratory Nova Burst / Crowd Cut Stage Overlay */}
+              {/* Celebratory Nova Burst / Crowd Confetti / Pulse Overlay (G-013) */}
               {novaFlash && (
-                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-gradient-to-tr from-[#D90429]/30 via-amber-400/20 to-[#A3E635]/30 animate-nova-burst">
-                  <div className="rounded-2xl border border-amber-300/60 bg-black/80 px-6 py-4 text-center text-white shadow-2xl backdrop-blur-md">
+                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-gradient-to-tr from-[#D90429]/30 via-amber-400/20 to-[#A3E635]/30 motion-safe:animate-nova-burst">
+                  {novaFlash.fxKind !== 'pulse' && (
+                    <div className="absolute inset-0 overflow-hidden">
+                      {Array.from({ length: 16 }).map((_, idx) => (
+                        <span
+                          key={idx}
+                          style={{
+                            left: `${(idx * 6.5 + 4) % 94}%`,
+                            top: `${(idx * 17 + 8) % 80}%`,
+                            backgroundColor: ['#D90429', '#A3E635', '#E8C86A', '#38bdf8'][idx % 4],
+                          }}
+                          className="absolute h-2 w-3 rounded-xs opacity-85 motion-safe:animate-bounce"
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="relative rounded-2xl border border-amber-300/60 bg-black/82 px-6 py-4 text-center text-white shadow-2xl backdrop-blur-md">
                     <div className="flex items-center justify-center gap-2 text-amber-300 font-bold text-xs uppercase tracking-widest">
                       <Sparkles className="h-4 w-4" />
-                      <span>NOVA STAGE BURST</span>
+                      <span>
+                        {novaFlash.fxKind === 'nova'
+                          ? 'NOVA STAGE BURST'
+                          : novaFlash.fxKind === 'confetti'
+                            ? 'CROWD CONFETTI FX'
+                            : 'STAGE PULSE HYPE'}
+                      </span>
                       <Sparkles className="h-4 w-4" />
                     </div>
                     <div className="mt-1 font-display text-lg font-extrabold">
@@ -1321,19 +1381,108 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   <h1 className="font-display text-base sm:text-xl font-bold truncate">
                     {liveStream.title}
                   </h1>
-                  <p className="flex items-center gap-1.5 text-xs text-white/85 font-mono-nums">
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/85 font-mono-nums">
                     <span>{countryFlag(liveStream.countryCode)}</span>
                     <span>{liveStream.hostName}</span>
                     {liveStream.hostVerified && <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />}
                     {liveStream.hostNumericId && <span className="opacity-70">#{liveStream.hostNumericId}</span>}
                     <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
+                    {liveStream.consentVerified && (
+                      <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                        CONSENTED
+                      </span>
+                    )}
+                    {slowModeSec > 0 && (
+                      <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                        SLOW {slowModeSec}s
+                      </span>
+                    )}
                   </p>
                 </div>
-                <span className="shrink-0 font-mono-nums text-xs font-bold tracking-wide text-[var(--accent-primary)]">
-                  ON AIR
-                </span>
+                <div className="shrink-0 text-right">
+                  <span className="block font-mono-nums text-xs font-bold tracking-wide text-[var(--accent-primary)]">
+                    ON AIR
+                  </span>
+                  <span className="text-[10px] font-mono-nums text-white/60">
+                    {rtcTurnReady ? 'RTC TURN' : 'RTC STUN'}
+                  </span>
+                </div>
               </div>
             </div>
+          )}
+
+          {/* Co-Host / Co-Publish Rail (up to 4 co-hosts — G-037) */}
+          {(coHosts.length > 0 || isHostOrMod) && (
+            <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-4 py-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[var(--fg-primary)]">
+                  <Video className="h-4 w-4 text-[var(--accent-primary)]" />
+                  <span>Co-Host Rail ({coHosts.length}/4)</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {isHostOrMod ? (
+                    <>
+                      <input
+                        type="text"
+                        value={coHostInviteUid}
+                        onChange={(e) => setCoHostInviteUid(e.target.value)}
+                        placeholder="Invite UID (e.g. ST-2001)"
+                        className="h-8 w-36 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-xs text-[var(--fg-primary)]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!coHostInviteUid.trim()) return;
+                          sendWsEvent('room:cohost_invite', {
+                            roomId: liveStream.id,
+                            targetUid: coHostInviteUid.trim().toUpperCase(),
+                          });
+                          setCoHostInviteUid('');
+                        }}
+                        className="h-8 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-semibold text-[var(--accent-contrast)] cursor-pointer"
+                      >
+                        Invite
+                      </button>
+                    </>
+                  ) : session && coHosts.some((c) => c.uid === session.uid && c.status === 'invited') ? (
+                    <button
+                      type="button"
+                      onClick={() => sendWsEvent('room:cohost_accept', { roomId: liveStream.id })}
+                      className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      Accept Co-Host Stage
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {coHosts.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {coHosts.map((ch) => (
+                    <div
+                      key={ch.uid}
+                      className="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-2.5 py-2 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate font-semibold text-[var(--fg-primary)]">{ch.displayName}</div>
+                        <div className="text-[10px] font-mono-nums text-[var(--fg-muted)]">
+                          {ch.status === 'live' ? 'CO-HOST LIVE' : 'INVITED'}
+                        </div>
+                      </div>
+                      {(isHostOrMod || session?.uid === ch.uid) && (
+                        <button
+                          type="button"
+                          onClick={() => sendWsEvent('room:cohost_leave', { roomId: liveStream.id, targetUid: ch.uid })}
+                          aria-label="Remove Co-Host"
+                          className="text-[var(--fg-muted)] hover:text-rose-500 cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
 
           {/* Live PK Battle Meter */}

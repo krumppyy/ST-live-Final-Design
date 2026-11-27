@@ -77,6 +77,39 @@ interface AppContextValue {
   sendWsEvent: (event: string, payload?: Record<string, unknown>) => void;
   subscribeWs: (listener: WsListener) => () => void;
 
+  // Studio Quick-Preset Console Bridge (unifies Studio -> Camera -> Live Room with zero overlap)
+  activeStudioPresetId: string | null;
+  studioPresetAppliedAt: number;
+  studioOverlayCaption: string;
+  setStudioOverlayCaption: (text: string) => void;
+  studioPresetOverrides: {
+    resolution?: string;
+    fps?: 30 | 60;
+    aspect?: string;
+    filterId?: string;
+    ancEnabled?: boolean;
+    bncEnabled?: boolean;
+    screenSharePip?: boolean;
+    arOverlay?: string;
+    pin?: string;
+  };
+  applyStudioPreset: (
+    presetId: string,
+    overrides?: {
+      resolution?: string;
+      fps?: 30 | 60;
+      aspect?: string;
+      filterId?: string;
+      ancEnabled?: boolean;
+      bncEnabled?: boolean;
+      screenSharePip?: boolean;
+      arOverlay?: string;
+      caption?: string;
+      pin?: string;
+    }
+  ) => void;
+  clearStudioPreset: () => void;
+
   // Floating PiP mini-player
   pipStream: Livestream | null;
   setPipStream: (s: Livestream | null) => void;
@@ -136,6 +169,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [followingHostUids, setFollowingHostUids] = useState<string[]>([]);
   const [mediaLibrary, setMediaLibrary] = useState<CapturedAsset[]>([]);
   const [pipStream, setPipStream] = useState<Livestream | null>(null);
+  const [activeStudioPresetId, setActiveStudioPresetId] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem('stlive_studio_preset') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [studioPresetAppliedAt, setStudioPresetAppliedAt] = useState<number>(0);
+  const [studioOverlayCaption, setStudioOverlayCaption] = useState<string>('');
+  const [studioPresetOverrides, setStudioPresetOverrides] = useState<AppContextValue['studioPresetOverrides']>({});
 
   const [streams, setStreams] = useState<Livestream[]>([]);
   const [games, setGames] = useState<GameRoomState[]>([]);
@@ -320,11 +363,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [checkedInToday, authFetch, pushToast]);
 
   const addMediaAsset = useCallback((asset: CapturedAsset) => {
-    setMediaLibrary((prev) => [asset, ...prev]);
+    setMediaLibrary((prev) => [asset, ...prev].slice(0, 24));
   }, []);
 
   const removeMediaAsset = useCallback((id: string) => {
     setMediaLibrary((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const applyStudioPreset = useCallback(
+    (
+      presetId: string,
+      overrides?: {
+        resolution?: string;
+        fps?: 30 | 60;
+        aspect?: string;
+        filterId?: string;
+        ancEnabled?: boolean;
+        bncEnabled?: boolean;
+        screenSharePip?: boolean;
+        arOverlay?: string;
+        caption?: string;
+        pin?: string;
+      }
+    ) => {
+      setActiveStudioPresetId(presetId);
+      setStudioPresetAppliedAt(Date.now());
+      if (overrides?.caption !== undefined) {
+        setStudioOverlayCaption(overrides.caption);
+      }
+      setStudioPresetOverrides({
+        resolution: overrides?.resolution,
+        fps: overrides?.fps,
+        aspect: overrides?.aspect,
+        filterId: overrides?.filterId,
+        ancEnabled: overrides?.ancEnabled,
+        bncEnabled: overrides?.bncEnabled,
+        screenSharePip: overrides?.screenSharePip,
+        arOverlay: overrides?.arOverlay,
+        pin: overrides?.pin,
+      });
+      try {
+        window.localStorage.setItem('stlive_studio_preset', presetId);
+      } catch {
+        // ignore storage errors
+      }
+    },
+    []
+  );
+
+  const clearStudioPreset = useCallback(() => {
+    setActiveStudioPresetId(null);
+    setStudioPresetOverrides({});
+    try {
+      window.localStorage.removeItem('stlive_studio_preset');
+    } catch {
+      // ignore
+    }
   }, []);
 
   useEffect(() => {
@@ -529,6 +623,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     wsConnected,
     sendWsEvent,
     subscribeWs,
+    activeStudioPresetId,
+    studioPresetAppliedAt,
+    studioOverlayCaption,
+    setStudioOverlayCaption,
+    studioPresetOverrides,
+    applyStudioPreset,
+    clearStudioPreset,
     pipStream,
     setPipStream,
     toasts,

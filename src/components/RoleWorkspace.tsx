@@ -16,6 +16,7 @@ import {
   Users,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { StudioPresetsConsole } from './StudioPresetsConsole';
 import type {
   AdminGrantSummary,
   AdminPermissions,
@@ -92,7 +93,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
   const { session, authFetch, logout, pushToast, refreshStreams, subscribeWs, games, sendWsEvent, t } =
     useApp();
 
-  const [subView, setSubView] = useState<'role' | 'compare'>('role');
+  const [subView, setSubView] = useState<'presets' | 'role' | 'compare'>('presets');
 
   // Host state
   const [directory, setDirectory] = useState<DirectoryUser[]>([]);
@@ -117,6 +118,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
   const [liveCategory, setLiveCategory] = useState<Livestream['category']>('solo');
   const [liveSeats, setLiveSeats] = useState(6);
   const [liveGameType, setLiveGameType] = useState<'' | 'fps' | 'ludo' | 'snakes'>('fps');
+  const [liveConsentChecked, setLiveConsentChecked] = useState(false);
 
   // Admin state
   const [adminScope, setAdminScope] = useState<{
@@ -288,6 +290,10 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
 
   const handleGoLive = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!liveConsentChecked) {
+      pushToast('Confirm 18+ & Safety Broadcast Consent before going live.', 'error');
+      return;
+    }
     const res = await authFetch('/api/streams', {
       method: 'POST',
       body: JSON.stringify({
@@ -295,6 +301,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
         category: liveCategory,
         maxSeats: liveSeats,
         gameType: liveGameType || undefined,
+        consentVerified: true,
       }),
     });
     const data = await res.json();
@@ -303,6 +310,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
       return;
     }
     setLiveTitle('');
+    setLiveConsentChecked(false);
     await refreshStreams();
     pushToast('Broadcast is now live!', 'success');
     if (data.stream) onEnterStream(data.stream);
@@ -380,8 +388,19 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex p-1 rounded-xl bg-[var(--bg-elevated)]">
+            <button
+              type="button"
+              onClick={() => setSubView('presets')}
+              className={`h-9 rounded-lg px-3.5 text-xs font-medium cursor-pointer ${
+                subView === 'presets'
+                  ? 'bg-[var(--bg-surface)] text-[var(--fg-primary)] shadow-xs font-semibold'
+                  : 'text-[var(--fg-secondary)]'
+              }`}
+            >
+              Quick Presets
+            </button>
             <button
               type="button"
               onClick={() => setSubView('role')}
@@ -427,8 +446,14 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
         </div>
       </div>
 
-      {/* Platform Benchmark Matrix (STLive vs Bigo Live, BuzzCast, Mango Live, Papaya Live) */}
-      {subView === 'compare' ? (
+      {/* One-Tap Studio Quick Presets & Dedicated Live Console */}
+      {subView === 'presets' ? (
+        <StudioPresetsConsole
+          onOpenLogin={onOpenLogin}
+          onEnterStream={onEnterStream}
+          onOpenCamera={() => onNavigateTab('camera')}
+        />
+      ) : subView === 'compare' ? (
         <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] overflow-hidden">
           <div className="p-5 border-b border-[var(--border-hairline)]">
             <h2 className="font-display text-lg font-bold text-[var(--fg-primary)]">
@@ -539,6 +564,17 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
               >
                 Go Live ({liveSeats} seats)
               </button>
+              <label className="sm:col-span-2 lg:col-span-5 flex items-center gap-2 text-xs text-[var(--fg-secondary)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={liveConsentChecked}
+                  onChange={(e) => setLiveConsentChecked(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--accent-primary)]"
+                />
+                <span>
+                  I confirm 18+ safety compliance and active participant consent for this livestream.
+                </span>
+              </label>
             </form>
             <div className="flex items-center gap-3 text-xs text-[var(--fg-secondary)]">
               <span>Multi-Guest Stage Capacity:</span>

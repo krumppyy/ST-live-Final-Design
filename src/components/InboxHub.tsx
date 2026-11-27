@@ -16,12 +16,14 @@ import {
   Send,
   Share2,
   ShieldCheck,
+  Smile,
   Trash2,
   UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { countryFlag } from '../lib/countries';
 import {
   compressImageToDataUrl,
   computeSafetyNumber,
@@ -30,6 +32,7 @@ import {
   formatRemainingCountdown,
   formatTtlShort,
 } from '../lib/e2ee';
+import { parseStickerCode, STICKER_PACKS } from '../lib/stickers';
 import type { DirectoryUser, InboxConversation, InboxMessage } from '../types';
 
 interface InboxHubProps {
@@ -90,6 +93,8 @@ export const InboxHub: React.FC<InboxHubProps> = ({
   const [viewOnceToggle, setViewOnceToggle] = useState(false);
   const [msgTtlOverride, setMsgTtlOverride] = useState<number | null>(null);
   const [showPhotoPicker, setShowPhotoPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [stickerPackId, setStickerPackId] = useState<'hype' | 'cute' | 'stage' | 'gaming'>('hype');
   const [typingLabel, setTypingLabel] = useState<string | null>(null);
 
   // Popovers & Modals
@@ -991,9 +996,18 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                               <span className="text-[11px] opacity-80">Loading encrypted photo...</span>
                             )}
                           </div>
-                        ) : (
-                          <p className="whitespace-pre-wrap break-words leading-relaxed">{plain}</p>
-                        )}
+                        ) : (() => {
+                          const st = parseStickerCode(plain);
+                          if (st) {
+                            return (
+                              <div className="flex flex-col items-center gap-0.5 py-1 px-2">
+                                <span className="text-3xl leading-none">{st.emoji}</span>
+                                <span className="text-[10px] font-semibold opacity-85">{st.label}</span>
+                              </div>
+                            );
+                          }
+                          return <p className="whitespace-pre-wrap break-words leading-relaxed">{plain}</p>;
+                        })()}
 
                         {/* Meta row: E2EE lock, Disappearing countdown, Timestamp, Read Receipt, Delete */}
                         <div className="mt-1 flex items-center justify-end gap-1.5 text-[9px] opacity-75">
@@ -1082,14 +1096,82 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                 </div>
               )}
 
-              {/* Composer Bar (Text + Photo + 1× View-Once + Disappearing Timer) */}
+              {/* 32-Sticker Picker Drawer in Inbox (G-049 / G-062) */}
+              {showStickerPicker && (
+                <div className="border-t border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 py-2 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1">
+                      {STICKER_PACKS.map((pk) => (
+                        <button
+                          key={pk.id}
+                          type="button"
+                          onClick={() => setStickerPackId(pk.id)}
+                          className={`h-6 rounded-md px-2 text-[10px] font-semibold cursor-pointer ${
+                            stickerPackId === pk.id
+                              ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                              : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
+                          }`}
+                        >
+                          {pk.name}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowStickerPicker(false)}
+                      className="p-1 text-[var(--fg-muted)] cursor-pointer"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5">
+                    {(STICKER_PACKS.find((p) => p.id === stickerPackId)?.items || []).map((st) => (
+                      <button
+                        key={st.code}
+                        type="button"
+                        onClick={() => {
+                          sendMessage('text', st.code);
+                          setShowStickerPicker(false);
+                        }}
+                        className="flex flex-col items-center justify-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] py-1.5 hover:border-[var(--accent-primary)] cursor-pointer"
+                      >
+                        <span className="text-lg leading-none">{st.emoji}</span>
+                        <span className="mt-0.5 text-[9px] text-[var(--fg-secondary)] truncate max-w-full px-1">
+                          {st.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Composer Bar (Text + Stickers + Photo + 1× View-Once + Disappearing Timer) */}
               <form
                 onSubmit={handleFormSubmit}
                 className="flex items-center gap-1.5 border-t border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-2"
               >
                 <button
                   type="button"
-                  onClick={() => setShowPhotoPicker((v) => !v)}
+                  onClick={() => {
+                    setShowStickerPicker((v) => !v);
+                    setShowPhotoPicker(false);
+                  }}
+                  aria-label="Stickers"
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border cursor-pointer ${
+                    showStickerPicker
+                      ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/15 text-[var(--accent-primary)]'
+                      : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
+                  }`}
+                >
+                  <Smile className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPhotoPicker((v) => !v);
+                    setShowStickerPicker(false);
+                  }}
                   aria-label="Send Photo"
                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border cursor-pointer ${
                     showPhotoPicker
@@ -1194,9 +1276,12 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                     className="flex w-full items-center justify-between rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)]/60 px-3 py-2 text-left hover:border-[var(--accent-primary)] cursor-pointer"
                   >
                     <div>
-                      <p className="text-xs font-semibold text-[var(--fg-primary)]">{u.displayName}</p>
+                      <p className="text-xs font-semibold text-[var(--fg-primary)] flex items-center gap-1.5">
+                        <span>{countryFlag(u.countryCode || 'US')}</span>
+                        <span>{u.displayName}</span>
+                      </p>
                       <p className="text-[10px] font-mono-nums text-[var(--fg-muted)]">
-                        {u.uid} · {u.role}
+                        {u.numericId ? `#${u.numericId} · ` : ''}{u.uid} · {u.role}
                       </p>
                     </div>
                     <Lock className="h-3.5 w-3.5 text-emerald-400" />

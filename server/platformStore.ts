@@ -817,11 +817,14 @@ export function toggleFollowDb(followerUid: string, hostUid: string): { followin
   if (exists) {
     db.prepare('DELETE FROM follows WHERE follower_uid = ? AND host_uid = ?').run(followerUid, hostUid);
   } else {
-    db.prepare('INSERT OR IGNORE INTO follows (follower_uid, host_uid, created_at) VALUES (?, ?, ?)').run(
-      followerUid,
-      hostUid,
-      Date.now()
-    );
+    const currentCount = (db.prepare('SELECT COUNT(*) as c FROM follows WHERE host_uid = ?').get(hostUid) as { c: number }).c;
+    if (currentCount < 1000) {
+      db.prepare('INSERT OR IGNORE INTO follows (follower_uid, host_uid, created_at) VALUES (?, ?, ?)').run(
+        followerUid,
+        hostUid,
+        Date.now()
+      );
+    }
   }
   const c = (db.prepare('SELECT COUNT(*) as c FROM follows WHERE host_uid = ?').get(hostUid) as { c: number }).c;
   return { following: !exists, followerCount: c };

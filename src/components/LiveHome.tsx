@@ -45,6 +45,7 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
   const [multiView, setMultiView] = useState(false);
   const [multiActiveSoundId, setMultiActiveSoundId] = useState<string | null>(null);
   const [multiHiddenIds, setMultiHiddenIds] = useState<string[]>([]);
+  const [pageLimit, setPageLimit] = useState<number>(24);
   const [showWideRail, setShowWideRail] = useState(true);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -533,7 +534,10 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                   : 'lg:grid-cols-4 xl:grid-cols-5 min-[1920px]:grid-cols-6 min-[2480px]:grid-cols-7 min-[3000px]:grid-cols-8'
               }`}
             >
-              {filtered.map((stream) => (
+              {filtered.slice(0, pageLimit).map((stream) => {
+                const filledSeats = stream.seats?.filter((s) => Boolean(s.uid)).length ?? 1;
+                const isRoomFull = stream.maxSeats > 0 && filledSeats >= stream.maxSeats;
+                return (
                 <article
                   key={stream.id}
                   onClick={() => onSelectStream(stream)}
@@ -585,7 +589,9 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-md bg-black/60 px-1.5 py-0.5 font-mono-nums">
                       <span className="text-xs leading-none">{countryFlag(stream.countryCode)}</span>
-                      <span className="text-[var(--accent-secondary)]">{stream.maxSeats}s</span>
+                      <span className={isRoomFull ? 'text-amber-300 font-bold' : 'text-[var(--accent-secondary)]'}>
+                        {isRoomFull ? 'FULL' : `${stream.maxSeats}s`}
+                      </span>
                     </span>
                   </div>
 
@@ -606,7 +612,19 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
+            </div>
+          )}
+          {!multiView && filtered.length > pageLimit && (
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setPageLimit((n) => n + 24)}
+                className="h-9 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+              >
+                Load More ({filtered.length - pageLimit} remaining)
+              </button>
             </div>
           )}
         </section>

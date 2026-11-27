@@ -1,5 +1,5 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
-import { Maximize2, X } from 'lucide-react';
+import { Maximize2, Volume2, VolumeX, X } from 'lucide-react';
 import { CameraStudio } from './components/CameraStudio';
 import { InboxHub } from './components/InboxHub';
 import { LibraryView } from './components/LibraryView';
@@ -65,9 +65,23 @@ const StreamLiveShell: React.FC = () => {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const deepLinkAppliedRef = useRef(false);
 
-  // Draggable Floating PiP Position
+  // Draggable Floating PiP Position & Mute Toggle
   const [pipPos, setPipPos] = useState<{ x: number; y: number }>({ x: 16, y: 80 });
+  const [pipMuted, setPipMuted] = useState<boolean>(true);
   const pipDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  // Escape closes any open modal or sheet cleanly (G-026)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (loginOpen) setLoginOpen(false);
+        else if (testModeOpen) setTestModeOpen(false);
+        else if (prefsOpen) setPrefsOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [loginOpen, testModeOpen, prefsOpen]);
 
   // Resolve directly shared links (?room=<id>, ?live=cam, or ?joinGroup=<code>)
   useEffect(() => {
@@ -240,6 +254,14 @@ const StreamLiveShell: React.FC = () => {
                 <span>{countryFlag(pipStream.countryCode)}</span>
               </span>
               <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPipMuted((m) => !m)}
+                  aria-label={pipMuted ? 'Unmute PiP Stream' : 'Mute PiP Stream'}
+                  className="flex h-6 w-6 items-center justify-center rounded-md bg-black/70 hover:bg-[var(--accent-secondary)] hover:text-black cursor-pointer"
+                >
+                  {pipMuted ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleOpenStream(pipStream)}

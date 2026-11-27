@@ -58,6 +58,34 @@ initSchema();
 const app = express();
 app.use(express.json({ limit: '8mb' }));
 
+// Build provenance header (G-085)
+const BUILD_TAG = process.env.OFFICIAL_BUILD === '0' ? 'stlive-dev-build' : 'official-stlive-2026';
+app.use((_req, res, next) => {
+  res.setHeader('X-STLive-Build', BUILD_TAG);
+  next();
+});
+
+// Safe WebRTC ICE / TURN + optional HLS configuration endpoint (G-035)
+app.get('/api/config/rtc', (_req, res) => {
+  const iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }> = [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  ];
+  const turnUrl = (process.env.TURN_URL || '').trim();
+  if (turnUrl) {
+    const turnEntry: { urls: string; username?: string; credential?: string } = { urls: turnUrl };
+    if (process.env.TURN_USERNAME) turnEntry.username = process.env.TURN_USERNAME;
+    if (process.env.TURN_CREDENTIAL) turnEntry.credential = process.env.TURN_CREDENTIAL;
+    iceServers.push(turnEntry);
+  }
+  const hlsUrl = (process.env.HLS_URL || '').trim() || null;
+  res.json({
+    iceServers,
+    turnConfigured: Boolean(turnUrl),
+    hlsUrl,
+    build: BUILD_TAG,
+  });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
@@ -70,7 +98,51 @@ server.on('upgrade', (req, socket, head) => {
 });
 const gameEngine = new MultiplayerGameEngine();
 
-// In-memory real-time room state (seats, PK, chat, muted users, followers)
+const MAX_ROOMS = 1000;
+const ALLOWED_WS_EVENTS = new Set([
+  'auth:identify',
+  'room:join',
+  'room:follow_toggle',
+  'room:launch_game',
+  'room:chat',
+  'room:gift',
+  'room:seat_toggle',
+  'room:pk_toggle',
+  'room:mute_user',
+  'room:slow_mode',
+  'room:cohost_invite',
+  'room:cohost_accept',
+  'room:cohost_leave',
+  'game:request_join',
+  'game:approve_player',
+  'game:decline_player',
+  'game:add_bot',
+  'game:restart',
+  'game:roll_dice',
+  'game:move_piece',
+  'game:fps_pose',
+  'game:fps_hit',
+  'inbox:typing',
+  'duel:start',
+  'duel:join_roll',
+  'rtc:offer',
+  'rtc:answer',
+  'rtc:ice',
+  'rtc:bye',
+  'call:invite',
+  'call:accept',
+  'call:decline',
+  'call:hangup',
+]);
+
+// In-memory real-time room state (seats, PK, chat, muted users, followers, slow-mode, co-hosts)
+interface CoHostEntry {
+  uid: string;
+  displayName: string;
+  status: 'invited' | 'live';
+  joinedAt: number;
+}
+
 interface LiveRoomRuntime {
   seats: MultiGuestSeat[];
   pk: PKState;
@@ -78,6 +150,9 @@ interface LiveRoomRuntime {
   messages: ChatMessage[];
   mutedUids: Set<string>;
   followers: Set<string>;
+  slowModeSec: number;
+  lastChatAtByUid: Map<string, number>;
+  coHosts: CoHostEntry[];
 }
 
 const roomRuntimes = new Map<string, LiveRoomRuntime>();
@@ -125,10 +200,27 @@ function getOrCreateRuntime(streamId: string, maxSeats: number, hostUid: string,
       ],
       mutedUids: new Set(),
       followers: new Set(['ST-2001', 'ST-2002']),
+      slowModeSec: 0,
+      lastChatAtByUid: new Map(),
+      coHosts: [],
     };
     roomRuntimes.set(streamId, rt);
   }
   return rt;
+}
+
+function buildRoomStatePayload(roomId: string, rt: LiveRoomRuntime) {
+  return {
+    roomId,
+    seats: rt.seats,
+    pk: rt.pk,
+    duel: rt.duel,
+    messages: rt.messages,
+    mutedUids: Array.from(rt.mutedUids),
+    followers: Array.from(rt.followers),
+    slowModeSec: rt.slowModeSec,
+    coHosts: rt.coHosts,
+  };
 }
 
 function hydrateStreams(): Livestream[] {
@@ -432,13 +524,23 @@ app.post('/api/streams', (req, res) => {
       : null;
   const rawPin = typeof req.body?.pin === 'string' ? req.body.pin.trim() : '';
   const hasPin = /^\d{6}$/.test(rawPin);
-  const consentVerified = req.body?.consentVerified !== false;
+  // Strict opt-in broadcast safety & 18+ consent enforcement (G-044)
+  const consentVerified = req.body?.consentVerified === true;
 
+  if (!consentVerified) {
+    return res.status(400).json({
+      error: 'Explicit safety & 18+ broadcast consent confirmation is required before going live.',
+    });
+  }
   if (title.length < 3) {
     return res.status(400).json({ error: 'Stream title must be at least 3 characters.' });
   }
   if (rawPin && !hasPin) {
     return res.status(400).json({ error: 'Room PIN lock must be exactly 6 digits.' });
+  }
+  const activeCount = (db.prepare('SELECT COUNT(*) as c FROM streams WHERE is_live = 1').get() as { c: number }).c;
+  if (activeCount >= MAX_ROOMS) {
+    return res.status(429).json({ error: 'Active room capacity (1,000) reached. Try again shortly.' });
   }
 
   const validCategories = ['solo', 'multi_guest', 'audio', 'pk', 'games', 'music_band', 'gaming', 'brand_drop'];
@@ -1147,18 +1249,26 @@ wss.on('connection', (ws, req) => {
 
   ws.on('message', (raw) => {
     const rawStr = raw.toString();
-    if (rawStr.length > 16_384) {
-      sendWs(ws, 'ws:error', { message: 'Frame exceeds size cap.' });
-      return;
-    }
     let msg: { event?: string; payload?: Record<string, unknown> };
     try {
       msg = stripProtoPollution(JSON.parse(rawStr));
     } catch {
       return;
     }
-    const event = msg.event;
+    const event = typeof msg.event === 'string' ? msg.event : '';
     const payload = msg.payload || {};
+
+    // Explicit WS event whitelist & 2KB / 8KB SDP frame size caps (G-081)
+    if (!ALLOWED_WS_EVENTS.has(event)) {
+      sendWs(ws, 'ws:error', { message: 'Unsupported realtime event.' });
+      return;
+    }
+    const isSdpEvent = event === 'rtc:offer' || event === 'rtc:answer';
+    const maxBytes = isSdpEvent ? 9_000 : 2_048;
+    if (Buffer.byteLength(rawStr, 'utf8') > maxBytes) {
+      sendWs(ws, 'ws:error', { message: 'Message exceeds realtime frame size limit.' });
+      return;
+    }
 
     if (event !== 'game:fps_pose' && event !== 'inbox:typing') {
       const flood = checkWsFlood(meta.session?.uid || clientIp);
@@ -1183,16 +1293,32 @@ wss.on('connection', (ws, req) => {
       const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
       const stream = listAllStreams().find((s) => s.id === roomId);
       if (!stream) return;
+      const wasInRoom = meta.subscribedRoomId === roomId;
       meta.subscribedRoomId = roomId;
       const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
-      sendWs(ws, 'room:state', {
-        roomId,
-        seats: rt.seats,
-        pk: rt.pk,
-        messages: rt.messages,
-        mutedUids: Array.from(rt.mutedUids),
-        followers: Array.from(rt.followers),
-      });
+      // VIP / High-level join fanfare announcement (G-034)
+      if (!wasInRoom && meta.session && meta.session.uid !== stream.hostUid) {
+        const isVip = Boolean(meta.session.vipUntil && meta.session.vipUntil > Date.now());
+        if (isVip || (meta.session.level || 1) >= 5) {
+          const fanfare: ChatMessage = {
+            id: crypto.randomUUID(),
+            roomId,
+            uid: meta.session.uid,
+            displayName: meta.session.displayName,
+            role: meta.session.role,
+            isVip,
+            level: meta.session.level,
+            text: isVip
+              ? `✨ VIP ${meta.session.displayName} (Lv.${meta.session.level}) entered the studio!`
+              : `⚡ ${meta.session.displayName} (Lv.${meta.session.level}) joined the room!`,
+            timestamp: Date.now(),
+          };
+          rt.messages.push(fanfare);
+          if (rt.messages.length > 200) rt.messages.shift();
+          broadcastRoom(roomId, 'room:chat_msg', fanfare);
+        }
+      }
+      sendWs(ws, 'room:state', buildRoomStatePayload(roomId, rt));
       return;
     }
 
@@ -1282,6 +1408,22 @@ wss.on('connection', (ws, req) => {
         sendWs(ws, 'ws:error', { message: 'You are muted in this live room.' });
         return;
       }
+      // 400ms base chat cooldown + optional Host slow-mode (G-034)
+      const isMod =
+        meta.session.uid === stream.hostUid ||
+        meta.session.role === 'staff' ||
+        canModerateHost(meta.session, stream.hostUid, 'canModerateChat');
+      const now = Date.now();
+      const lastSent = rt.lastChatAtByUid.get(meta.session.uid) || 0;
+      const minGapMs = isMod ? 200 : Math.max(400, rt.slowModeSec * 1000);
+      if (now - lastSent < minGapMs) {
+        const waitSec = Math.ceil((minGapMs - (now - lastSent)) / 1000);
+        sendWs(ws, 'ws:error', {
+          message: rt.slowModeSec > 0 ? `Slow mode active (${rt.slowModeSec}s). Wait ${waitSec}s.` : 'Chatting too fast.',
+        });
+        return;
+      }
+      rt.lastChatAtByUid.set(meta.session.uid, now);
       const scanned = threatScan(rawText, meta.session.uid);
       const text = scanned.clean;
       if (!text) return;
@@ -1303,6 +1445,83 @@ wss.on('connection', (ws, req) => {
       rt.messages.push(chat);
       if (rt.messages.length > 200) rt.messages.shift();
       broadcastRoom(roomId, 'room:chat_msg', chat);
+      return;
+    }
+
+    if (event === 'room:slow_mode') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      const seconds = Math.max(0, Math.min(30, Math.floor(Number(payload.seconds) || 0)));
+      if (!roomId || !meta.session) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      if (!canModerateHost(meta.session, stream.hostUid, 'canModerateChat') && meta.session.role !== 'staff') {
+        sendWs(ws, 'ws:error', { message: 'Only the Host or Room Mod can toggle slow mode.' });
+        return;
+      }
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      rt.slowModeSec = seconds;
+      broadcastRoom(roomId, 'room:state', buildRoomStatePayload(roomId, rt));
+      return;
+    }
+
+    // Co-Host / Co-Publish Rail (up to 4 co-hosts — G-037)
+    if (event === 'room:cohost_invite') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      const targetUid = typeof payload.targetUid === 'string' ? payload.targetUid.trim().toUpperCase() : '';
+      if (!roomId || !targetUid || !meta.session) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      if (!canModerateHost(meta.session, stream.hostUid, 'canManageSeats') && meta.session.role !== 'staff') {
+        sendWs(ws, 'ws:error', { message: 'Only the Host or Seat Admin can invite a Co-Host.' });
+        return;
+      }
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      if (rt.coHosts.length >= 4) {
+        sendWs(ws, 'ws:error', { message: 'Maximum 4 Co-Hosts allowed on stage.' });
+        return;
+      }
+      const targetUser = getUserByUid(targetUid);
+      const displayName = targetUser?.display_name || targetUid;
+      if (!rt.coHosts.some((c) => c.uid === targetUid)) {
+        rt.coHosts.push({ uid: targetUid, displayName, status: 'invited', joinedAt: Date.now() });
+      }
+      broadcastRoom(roomId, 'room:state', buildRoomStatePayload(roomId, rt));
+      return;
+    }
+
+    if (event === 'room:cohost_accept') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      if (!roomId || !meta.session) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      const entry = rt.coHosts.find((c) => c.uid === meta.session!.uid);
+      if (entry) {
+        entry.status = 'live';
+        entry.joinedAt = Date.now();
+      } else if (rt.coHosts.length < 4 && meta.session.uid !== stream.hostUid) {
+        rt.coHosts.push({
+          uid: meta.session.uid,
+          displayName: meta.session.displayName,
+          status: 'live',
+          joinedAt: Date.now(),
+        });
+      }
+      broadcastRoom(roomId, 'room:state', buildRoomStatePayload(roomId, rt));
+      return;
+    }
+
+    if (event === 'room:cohost_leave') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      const targetUid = typeof payload.targetUid === 'string' ? payload.targetUid : meta.session?.uid || '';
+      if (!roomId || !targetUid || !meta.session) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      if (targetUid === meta.session.uid || canModerateHost(meta.session, stream.hostUid, 'canManageSeats')) {
+        rt.coHosts = rt.coHosts.filter((c) => c.uid !== targetUid);
+        broadcastRoom(roomId, 'room:state', buildRoomStatePayload(roomId, rt));
+      }
       return;
     }
 
