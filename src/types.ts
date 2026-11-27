@@ -519,6 +519,8 @@ export interface PayoutRecord {
 export interface RoomVisitor {
   visitorUid: string;
   visitorName: string;
+  visitorNumericId?: number;
+  visitorCountryCode?: string;
   visitedAt: number;
 }
 

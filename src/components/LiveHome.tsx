@@ -37,7 +37,7 @@ const DISCOVERY_TABS: Array<{ id: DiscoveryFeedTab; label: string }> = [
 ];
 
 export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfile }) => {
-  const { streams, session, followingHostUids, t } = useApp();
+  const { streams, session, followingHostUids, pushToast, t } = useApp();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [feedTab, setFeedTab] = useState<DiscoveryFeedTab>('for_you');
@@ -49,6 +49,21 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
   const [multiActiveSoundId, setMultiActiveSoundId] = useState<string | null>(null);
   const [multiHiddenIds, setMultiHiddenIds] = useState<string[]>([]);
   const [lobbyPage, setLobbyPage] = useState<number>(1);
+  const [serverLobby, setServerLobby] = useState<{
+    streams: Livestream[];
+    total: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+    loaded: boolean;
+  }>({
+    streams: [],
+    total: 0,
+    page: 1,
+    pageSize: 24,
+    totalPages: 1,
+    loaded: false,
+  });
   const [showWideRail, setShowWideRail] = useState(true);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -103,77 +118,87 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
     });
   }, [countrySearch, countryLiveCounts]);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const userCountry = (session?.countryCode || 'US').toUpperCase();
-
-    let list = streams.filter((s) => {
-      if (category !== 'all' && s.category !== category) return false;
-      if (selectedCountry !== 'ALL' && (s.countryCode || 'US').toUpperCase() !== selectedCountry) {
-        return false;
-      }
-      if (feedTab === 'following' && !followingHostUids.includes(s.hostUid)) {
-        return false;
-      }
-      if (
-        feedTab === 'party' &&
-        !['multi_guest', 'audio', 'pk', 'games'].includes(s.category)
-      ) {
-        return false;
-      }
-      if (!q) return true;
-      const country = getCountry(s.countryCode);
-      return (
-        s.title.toLowerCase().includes(q) ||
-        s.hostName.toLowerCase().includes(q) ||
-        s.hostUid.toLowerCase().includes(q) ||
-        String(s.hostNumericId || '').includes(q.replace('#', '')) ||
-        s.language.toLowerCase().includes(q) ||
-        country.name.toLowerCase().includes(q) ||
-        country.code.toLowerCase().includes(q) ||
-        s.category.toLowerCase().includes(q)
-      );
-    });
-
-    list = [...list].sort((a, b) => {
-      if (feedTab === 'new') {
-        return (b.createdAt || 0) - (a.createdAt || 0);
-      }
-      if (feedTab === 'popular') {
-        const scoreB =
-          (b.viewMinutes || 0) * 20 +
-          b.viewerCount +
-          (b.totalGiftsCoins || 0) +
-          (b.followerCount || 0) * 10;
-        const scoreA =
-          (a.viewMinutes || 0) * 20 +
-          a.viewerCount +
-          (a.totalGiftsCoins || 0) +
-          (a.followerCount || 0) * 10;
-        return scoreB - scoreA;
-      }
-      if (feedTab === 'nearby') {
-        const nearB = (b.countryCode || 'US').toUpperCase() === userCountry ? 1 : 0;
-        const nearA = (a.countryCode || 'US').toUpperCase() === userCountry ? 1 : 0;
-        if (nearB !== nearA) return nearB - nearA;
-      }
-      return b.viewerCount - a.viewerCount;
-    });
-
-    return list;
-  }, [streams, category, selectedCountry, feedTab, followingHostUids, session?.countryCode, query]);
-
   const LOBBY_PAGE_SIZE = 24;
-  const totalLobbyPages = Math.max(1, Math.ceil(filtered.length / LOBBY_PAGE_SIZE));
-  const safeLobbyPage = Math.min(lobbyPage, totalLobbyPages);
-  const pagedFiltered = useMemo(
-    () => filtered.slice((safeLobbyPage - 1) * LOBBY_PAGE_SIZE, safeLobbyPage * LOBBY_PAGE_SIZE),
-    [filtered, safeLobbyPage]
-  );
 
   useEffect(() => {
     setLobbyPage(1);
   }, [feedTab, category, selectedCountry, query]);
+
+  // Server-authoritative lobby query (?sort=popular|new|nearby&page=&limit=24&q=&country=&category=)
+  const streamsSig = useMemo(
+    () => streams.map((s) => `${s.id}:${s.viewerCount}:${s.viewMinutes ?? 0}`).join('|'),
+    [streams]
+  );
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set('page', String(lobbyPage));
+        params.set('limit', String(LOBBY_PAGE_SIZE));
+        if (feedTab === 'popular') params.set('sort', 'popular');
+        else if (feedTab === 'new') params.set('sort', 'new');
+        else if (feedTab === 'nearby') {
+          params.set('sort', 'nearby');
+          params.set('feed', 'nearby');
+          params.set('userCountry', (session?.countryCode || 'US').toUpperCase());
+        } else if (feedTab === 'party') {
+          params.set('feed', 'party');
+        } else if (feedTab === 'following') {
+          params.set('feed', 'following');
+          params.set('following', followingHostUids.join(','));
+        }
+        if (category !== 'all') params.set('category', category);
+        if (selectedCountry !== 'ALL') params.set('country', selectedCountry);
+        if (query.trim()) params.set('q', query.trim());
+
+        const res = await fetch(`/api/streams?${params.toString()}`);
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        if (!active) return;
+        setServerLobby({
+          streams: Array.isArray(data.streams) ? data.streams : [],
+          total: Number(data.total ?? 0),
+          page: Number(data.page ?? 1),
+          pageSize: Number(data.pageSize ?? LOBBY_PAGE_SIZE),
+          totalPages: Math.max(1, Number(data.totalPages ?? 1)),
+          loaded: true,
+        });
+      } catch {
+        // fallback gracefully if offline
+      }
+    }, query.trim() ? 150 : 0);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [lobbyPage, feedTab, category, selectedCountry, query, followingHostUids, session?.countryCode, streamsSig]);
+
+  const filtered = serverLobby.loaded ? serverLobby.streams : streams;
+  const totalLobbyCount = serverLobby.loaded ? serverLobby.total : streams.length;
+  const totalLobbyPages = serverLobby.loaded
+    ? serverLobby.totalPages
+    : Math.max(1, Math.ceil(streams.length / LOBBY_PAGE_SIZE));
+  const safeLobbyPage = Math.min(lobbyPage, totalLobbyPages);
+  const pagedFiltered = filtered;
+
+  // Block regular visitor join at FULL (1.0M) capacity; hosts & staff bypass directly
+  const handleAttemptJoinStream = (stream: Livestream) => {
+    const isAtFullCap = Boolean(stream.isFull) || Number(stream.viewerCount || 0) >= 1_000_000;
+    const canBypassFull = Boolean(
+      session && (session.uid === stream.hostUid || session.role === 'staff')
+    );
+    if (isAtFullCap && !canBypassFull) {
+      pushToast(
+        `"${stream.title}" is FULL (1.0M viewer capacity reached). Only the Host or invited Co-Hosts can enter.`,
+        'error'
+      );
+      return;
+    }
+    onSelectStream(stream);
+  };
 
   const topTrending = useMemo(
     () => [...streams].sort((a, b) => b.viewerCount - a.viewerCount),
@@ -611,13 +636,13 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
                 return (
                 <article
                   key={stream.id}
-                  onClick={() => onSelectStream(stream)}
+                  onClick={() => handleAttemptJoinStream(stream)}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      onSelectStream(stream);
+                      handleAttemptJoinStream(stream);
                     }
                   }}
                   className="group relative aspect-[4/5] sm:aspect-[4/3] lg:aspect-[16/10] w-full cursor-pointer overflow-hidden rounded-2xl lg:rounded-xl border border-[var(--border-hairline)] bg-black transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--accent-primary)] focus-visible:outline-2 focus-visible:outline-[var(--accent-primary)]"
@@ -705,12 +730,12 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
               })}
             </div>
           )}
-          {!multiView && filtered.length > 0 && (
+          {!multiView && totalLobbyCount > 0 && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 py-2 text-xs text-[var(--fg-secondary)]">
               <span className="font-mono-nums">
                 Showing {(safeLobbyPage - 1) * LOBBY_PAGE_SIZE + 1}–
-                {Math.min(safeLobbyPage * LOBBY_PAGE_SIZE, filtered.length)} of {filtered.length}{' '}
-                live rooms ({LOBBY_PAGE_SIZE}/page)
+                {Math.min(safeLobbyPage * LOBBY_PAGE_SIZE, totalLobbyCount)} of {totalLobbyCount}{' '}
+                live rooms (server {LOBBY_PAGE_SIZE}/page)
               </span>
               {totalLobbyPages > 1 && (
                 <div className="flex items-center gap-1.5">

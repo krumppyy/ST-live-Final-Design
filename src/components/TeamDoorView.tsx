@@ -155,6 +155,21 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
   const [memberQuery, setMemberQuery] = useState('');
   const [membersPage, setMembersPage] = useState(1);
   const [actionMsg, setActionMsg] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
+  const [roomVisitorsModal, setRoomVisitorsModal] = useState<{
+    roomId: string;
+    title: string;
+    visitors: Array<{
+      visitorUid: string;
+      visitorName: string;
+      visitorNumericId?: number;
+      visitorCountryCode?: string;
+      visitedAt: number;
+    }>;
+    totalCount: number;
+    page: number;
+    totalPages: number;
+    sampled: boolean;
+  } | null>(null);
 
   // Tier 3 Audited Coin Grant form
   const [grantUid, setGrantUid] = useState('');
@@ -208,6 +223,32 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
       setBusy(false);
     }
   }, [teamToken]);
+
+  const loadTeamRoomVisitors = useCallback(
+    async (roomId: string, title: string, page = 1) => {
+      if (!teamToken) return;
+      try {
+        const res = await fetch(
+          `/api/rooms/${encodeURIComponent(roomId)}/visitors?page=${page}&limit=24`,
+          { headers: { 'X-Team-Token': teamToken } }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        setRoomVisitorsModal({
+          roomId,
+          title,
+          visitors: Array.isArray(data.visitors) ? data.visitors : [],
+          totalCount: Number(data.totalCount ?? data.total ?? 0),
+          page: Number(data.page ?? 1),
+          totalPages: Math.max(1, Number(data.totalPages ?? 1)),
+          sampled: Boolean(data.sampled),
+        });
+      } catch {
+        // ignore
+      }
+    },
+    [teamToken]
+  );
 
   const handleBootstrap = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -542,6 +583,14 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => loadTeamRoomVisitors(s.id, s.title, 1)}
+                          className="inline-flex h-7 items-center gap-1 rounded-lg border border-[var(--border-hairline)] px-2 text-[11px] font-medium hover:border-rose-500/60 cursor-pointer"
+                        >
+                          <Users className="h-3 w-3" />
+                          <span>Visitors</span>
+                        </button>
                         {onViewProfile && (
                           <button
                             type="button"
@@ -570,6 +619,91 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
                     </div>
                   ))}
                 </div>
+
+                {/* Server-Paginated 24/page Room Visitors Inspector */}
+                {roomVisitorsModal && (
+                  <div className="rounded-xl border border-rose-500/40 bg-[var(--bg-canvas)] p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <div>
+                        <strong className="text-[var(--fg-primary)]">
+                          Visitors · {roomVisitorsModal.title}
+                        </strong>
+                        <span className="ml-2 font-mono-nums text-[11px] text-[var(--fg-muted)]">
+                          ({roomVisitorsModal.totalCount}
+                          {roomVisitorsModal.sampled ? '+ sampled @300' : ''} · Page {roomVisitorsModal.page}/
+                          {roomVisitorsModal.totalPages})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setRoomVisitorsModal(null)}
+                        className="rounded-lg border border-[var(--border-hairline)] px-2 py-0.5 text-[11px] cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    {roomVisitorsModal.visitors.length === 0 ? (
+                      <p className="text-xs text-[var(--fg-muted)]">No visitors logged for this room yet.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 max-h-60 overflow-y-auto">
+                        {roomVisitorsModal.visitors.map((v, idx) => (
+                          <div
+                            key={`${v.visitorUid}-${idx}`}
+                            className="flex items-center justify-between rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-1.5 text-[11px]"
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span>{countryFlag(v.visitorCountryCode || 'US')}</span>
+                              <span className="font-semibold truncate">{v.visitorName}</span>
+                              {v.visitorNumericId && (
+                                <span className="rounded bg-[var(--bg-elevated)] px-1 font-mono-nums text-[10px] text-[var(--fg-muted)]">
+                                  #{v.visitorNumericId}
+                                </span>
+                              )}
+                            </div>
+                            <span className="font-mono-nums text-[10px] text-[var(--fg-muted)]">
+                              {new Date(v.visitedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {roomVisitorsModal.totalPages > 1 && (
+                      <div className="flex items-center justify-end gap-2 text-xs pt-1 border-t border-[var(--border-hairline)]">
+                        <button
+                          type="button"
+                          disabled={roomVisitorsModal.page <= 1}
+                          onClick={() =>
+                            loadTeamRoomVisitors(
+                              roomVisitorsModal.roomId,
+                              roomVisitorsModal.title,
+                              Math.max(1, roomVisitorsModal.page - 1)
+                            )
+                          }
+                          className="h-7 rounded-lg border border-[var(--border-hairline)] px-2.5 font-semibold disabled:opacity-40 cursor-pointer"
+                        >
+                          Prev
+                        </button>
+                        <span className="font-mono-nums text-[var(--fg-secondary)]">
+                          {roomVisitorsModal.page} / {roomVisitorsModal.totalPages} (24/pg)
+                        </span>
+                        <button
+                          type="button"
+                          disabled={roomVisitorsModal.page >= roomVisitorsModal.totalPages}
+                          onClick={() =>
+                            loadTeamRoomVisitors(
+                              roomVisitorsModal.roomId,
+                              roomVisitorsModal.title,
+                              Math.min(roomVisitorsModal.totalPages, roomVisitorsModal.page + 1)
+                            )
+                          }
+                          className="h-7 rounded-lg border border-[var(--border-hairline)] px-2.5 font-semibold disabled:opacity-40 cursor-pointer"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
             )}
 

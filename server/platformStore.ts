@@ -1363,7 +1363,8 @@ export function listRoomVisitorsDb(
   roomId: string,
   requesterUid: string,
   page = 1,
-  pageSize = 24
+  pageSize = 24,
+  forceFullAccess = false
 ): {
   total: number;
   totalCount: number;
@@ -1378,14 +1379,15 @@ export function listRoomVisitorsDb(
   const stream = db.prepare('SELECT host_uid FROM streams WHERE id = ?').get(roomId) as
     | { host_uid: string }
     | undefined;
-  const requester = getFullUserRow(requesterUid);
+  const requester = requesterUid ? getFullUserRow(requesterUid) : undefined;
   const isVip = Number(requester?.vip_until || 0) > Date.now();
-  const isHost = stream?.host_uid === requesterUid;
+  const isHost = Boolean(requesterUid && stream?.host_uid === requesterUid);
   const isStaff = requester?.role === 'staff';
   const isRoomAdmin = Boolean(
-    db.prepare('SELECT 1 FROM room_admins WHERE room_id = ? AND admin_uid = ?').get(roomId, requesterUid)
+    requesterUid &&
+      db.prepare('SELECT 1 FROM room_admins WHERE room_id = ? AND admin_uid = ?').get(roomId, requesterUid)
   );
-  const fullAccess = isHost || isVip || isStaff || isRoomAdmin;
+  const fullAccess = forceFullAccess || isHost || isVip || isStaff || isRoomAdmin;
 
   const total = (
     db.prepare('SELECT COUNT(DISTINCT visitor_uid) as c FROM room_visits WHERE room_id = ?').get(roomId) as {
@@ -1400,11 +1402,20 @@ export function listRoomVisitorsDb(
 
   const rows = db
     .prepare(
-      `SELECT visitor_uid, visitor_name, MAX(visited_at) as visited_at
-       FROM room_visits WHERE room_id = ?
-       GROUP BY visitor_uid ORDER BY visited_at DESC LIMIT ? OFFSET ?`
+      `SELECT rv.visitor_uid, rv.visitor_name, MAX(rv.visited_at) as visited_at,
+              u.numeric_id as visitor_numeric_id, u.country_code as visitor_country_code
+       FROM room_visits rv
+       LEFT JOIN users u ON u.uid = rv.visitor_uid
+       WHERE rv.room_id = ?
+       GROUP BY rv.visitor_uid ORDER BY visited_at DESC LIMIT ? OFFSET ?`
     )
-    .all(roomId, safeSize, offset) as Array<{ visitor_uid: string; visitor_name: string; visited_at: number }>;
+    .all(roomId, safeSize, offset) as Array<{
+    visitor_uid: string;
+    visitor_name: string;
+    visited_at: number;
+    visitor_numeric_id: number | null;
+    visitor_country_code: string | null;
+  }>;
 
   return {
     total,
@@ -1418,6 +1429,8 @@ export function listRoomVisitorsDb(
     visitors: rows.map((r) => ({
       visitorUid: r.visitor_uid,
       visitorName: r.visitor_name,
+      visitorNumericId: Number(r.visitor_numeric_id || 100100),
+      visitorCountryCode: r.visitor_country_code || 'US',
       visitedAt: r.visited_at,
     })),
   };

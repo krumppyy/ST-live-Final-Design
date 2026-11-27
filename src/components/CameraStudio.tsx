@@ -5,6 +5,7 @@ import {
   Ban,
   Bluetooth,
   Compass,
+  Copy,
   Download,
   Film,
   FlipHorizontal2,
@@ -70,6 +71,7 @@ type CamMode = 'reels' | 'live_photo' | 'photo' | 'video' | 'dual' | 'pano' | 't
 type TuningMode = 'auto' | 'custom' | 'pro';
 type BeautyProfile = 'off' | 'ladies' | 'gents';
 type MacroTune = 'off' | 'closeup' | 'macro';
+type FaceArPropId = 'none' | 'shades' | 'crown' | 'cat_ears' | 'blush_hearts';
 type DrawerTab =
   | 'none'
   | 'filters'
@@ -209,9 +211,20 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   });
   const [newFacePresetName, setNewFacePresetName] = useState('');
   const [arOverlay, setArOverlay] = useState<ArOverlayId>('none');
+  const [faceArProp, setFaceArProp] = useState<FaceArPropId>('none');
+  const [xrayMode, setXrayMode] = useState<boolean>(false);
   const [screenShareActive, setScreenShareActive] = useState(false);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  // Face-track landmark state (FaceDetector when supported, smooth center + gyro/blink/mic fallback)
+  const faceTrackRef = useRef<{ cx: number; cy: number; w: number; h: number; detected: boolean }>({
+    cx: 0.5,
+    cy: 0.42,
+    w: 0.28,
+    h: 0.34,
+    detected: false,
+  });
+  const micLevelRef = useRef<number>(0);
 
   // Audio BNC, ANC & Multi-Source Mic Hub (Auto, Wired, Bluetooth, Wireless, Wi-Fi)
   const [audioEnabled, setAudioEnabled] = useState(true);
@@ -247,11 +260,14 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [flashActive, setFlashActive] = useState(false);
   const [cameraStatus, setCameraStatus] = useState<'loading' | 'live' | 'simulated'>('loading');
 
-  // Touch Reticle, Pinch Zoom & PiP Drag Refs
+  // Touch Reticle, Pinch Zoom, Swipe-Tone Gesture & PiP Drag Refs
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
   const focusTimerRef = useRef<number | null>(null);
   const pinchStartDistRef = useRef<number | null>(null);
   const pinchStartZoomRef = useRef<number>(1);
+  const swipeStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const [swipeToneLabel, setSwipeToneLabel] = useState<string | null>(null);
+  const swipeToneTimerRef = useRef<number | null>(null);
   const draggingPipRef = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
 
   // Direct Go Live Form State (explicit opt-in consent defaults to false per G-044)
@@ -310,7 +326,9 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     if (!sp) return;
     setResolution((studioPresetOverrides.resolution as ResolutionOption) || sp.camera.resolution);
     setFps((studioPresetOverrides.fps as FpsOption) || sp.camera.fps);
-    setAspectRatio((studioPresetOverrides.aspect as AspectRatioId) || sp.camera.aspect);
+    if (!aspectLocked) {
+      setAspectRatio((studioPresetOverrides.aspect as AspectRatioId) || sp.camera.aspect);
+    }
     setPresetId(studioPresetOverrides.filterId || sp.camera.filterId);
     setAncEnabled(studioPresetOverrides.ancEnabled ?? sp.hardware.ancEnabled);
     setBncEnabled(studioPresetOverrides.bncEnabled ?? sp.hardware.bncEnabled);
@@ -585,6 +603,63 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
       setAspectRatio('9:16');
     }
   }, [camMode, aspectRatio, aspectLocked]);
+
+  // Keep live micLevel synced to ref for zero-jank AR mouth reactivity inside RAF loop
+  useEffect(() => {
+    micLevelRef.current = micLevel;
+  }, [micLevel]);
+
+  // Face-tracked AR prop landmark polling (uses native FaceDetector API when supported; smooth center fallback otherwise)
+  useEffect(() => {
+    if (faceArProp === 'none') return;
+    type FaceDetectorCtor = new (opts?: { fastMode?: boolean; maxDetectedFaces?: number }) => {
+      detect: (src: HTMLVideoElement) => Promise<Array<{ boundingBox: DOMRectReadOnly }>>;
+    };
+    const FaceDetectorClass = (window as unknown as { FaceDetector?: FaceDetectorCtor }).FaceDetector;
+    if (typeof FaceDetectorClass !== 'function') {
+      faceTrackRef.current = { cx: 0.5, cy: 0.42, w: 0.28, h: 0.34, detected: false };
+      return;
+    }
+    let active = true;
+    let detector: InstanceType<FaceDetectorCtor> | null = null;
+    try {
+      detector = new FaceDetectorClass({ fastMode: true, maxDetectedFaces: 1 });
+    } catch {
+      return;
+    }
+    const timer = window.setInterval(async () => {
+      if (!active || !detector) return;
+      const vid = videoRef.current;
+      if (!vid || vid.readyState < 2 || !vid.videoWidth || !vid.videoHeight) return;
+      try {
+        const faces = await detector.detect(vid);
+        if (!active) return;
+        if (faces && faces.length > 0) {
+          const b = faces[0].boundingBox;
+          const rawCx = (b.x + b.width / 2) / vid.videoWidth;
+          const targetCx = mirrored && facing === 'user' ? 1 - rawCx : rawCx;
+          const targetCy = (b.y + b.height / 2) / vid.videoHeight;
+          const targetW = Math.max(0.16, Math.min(0.6, b.width / vid.videoWidth));
+          const targetH = Math.max(0.2, Math.min(0.7, b.height / vid.videoHeight));
+          const cur = faceTrackRef.current;
+          // Smooth exponential interpolation to prevent jitter
+          faceTrackRef.current = {
+            cx: cur.cx + (targetCx - cur.cx) * 0.35,
+            cy: cur.cy + (targetCy - cur.cy) * 0.35,
+            w: cur.w + (targetW - cur.w) * 0.35,
+            h: cur.h + (targetH - cur.h) * 0.35,
+            detected: true,
+          };
+        }
+      } catch {
+        // Silently retain smooth fallback landmarks
+      }
+    }, 120);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [faceArProp, mirrored, facing]);
 
   // Recording Timer + Auto-stop at Reels Duration Limit
   useEffect(() => {
@@ -1059,6 +1134,155 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
             ctx.restore();
           }
 
+          // X-Ray Optical FX Layer (inverted high-contrast cyan scanline pass)
+          if (xrayMode) {
+            ctx.save();
+            ctx.globalCompositeOperation = 'difference';
+            ctx.fillStyle = 'rgba(225, 250, 255, 0.92)';
+            ctx.fillRect(frame.x, frame.y, frame.w, frame.h);
+            ctx.globalCompositeOperation = 'screen';
+            const scanY = frame.y + ((time * 0.14) % frame.h);
+            const scanGrad = ctx.createLinearGradient(frame.x, scanY - 24, frame.x, scanY + 24);
+            scanGrad.addColorStop(0, 'rgba(34,211,238,0)');
+            scanGrad.addColorStop(0.5, 'rgba(34,211,238,0.28)');
+            scanGrad.addColorStop(1, 'rgba(34,211,238,0)');
+            ctx.fillStyle = scanGrad;
+            ctx.fillRect(frame.x, scanY - 24, frame.w, 48);
+            ctx.strokeStyle = 'rgba(34,211,238,0.35)';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(frame.x + 8, frame.y + 8, frame.w - 16, frame.h - 16);
+            ctx.restore();
+          }
+
+          // Face-Tracked AR Props (FaceDetector landmark or smooth center + gyro tilt + blink + mic mouth reactivity)
+          if (faceArProp !== 'none') {
+            const ft = faceTrackRef.current;
+            const fx = frame.x + ft.cx * frame.w;
+            const fy = frame.y + ft.cy * frame.h;
+            const fw = Math.max(84, ft.w * frame.w);
+            const fh = Math.max(96, ft.h * frame.h);
+            const headRoll = ((gimbal.telemetry.roll || 0) * Math.PI) / 180;
+            const blinkCycle = (time % 4200) / 4200;
+            const blinkScaleY = blinkCycle > 0.94 ? 0.18 : 1;
+            const mouthAmp = Math.min(1, micLevelRef.current * 2.4);
+
+            ctx.save();
+            ctx.translate(fx, fy);
+            ctx.rotate(Math.max(-0.35, Math.min(0.35, headRoll * 0.6)));
+
+            if (faceArProp === 'shades') {
+              const lensW = fw * 0.42;
+              const lensH = fh * 0.2 * blinkScaleY;
+              const eyeY = -fh * 0.08;
+              ctx.fillStyle = 'rgba(12, 16, 28, 0.88)';
+              ctx.strokeStyle = '#E8C86A';
+              ctx.lineWidth = 2.5;
+              ctx.beginPath();
+              ctx.roundRect(-lensW - 6, eyeY - lensH / 2, lensW, Math.max(5, lensH), 8);
+              ctx.roundRect(6, eyeY - lensH / 2, lensW, Math.max(5, lensH), 8);
+              ctx.fill();
+              ctx.stroke();
+              // Bridge + specular sheen
+              ctx.beginPath();
+              ctx.moveTo(-6, eyeY);
+              ctx.lineTo(6, eyeY);
+              ctx.stroke();
+              ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(-lensW + 4, eyeY - lensH * 0.2);
+              ctx.lineTo(-lensW * 0.4, eyeY + lensH * 0.25);
+              ctx.moveTo(14, eyeY - lensH * 0.2);
+              ctx.lineTo(lensW * 0.65, eyeY + lensH * 0.25);
+              ctx.stroke();
+            } else if (faceArProp === 'crown') {
+              const cw = fw * 0.72;
+              const ch = fh * 0.28;
+              const topY = -fh * 0.56 - mouthAmp * 5;
+              const grad = ctx.createLinearGradient(-cw / 2, topY, cw / 2, topY + ch);
+              grad.addColorStop(0, '#FDE047');
+              grad.addColorStop(0.5, '#E8C86A');
+              grad.addColorStop(1, '#D97706');
+              ctx.fillStyle = grad;
+              ctx.strokeStyle = '#FEF08A';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              ctx.moveTo(-cw / 2, topY + ch);
+              ctx.lineTo(-cw * 0.46, topY + ch * 0.15);
+              ctx.lineTo(-cw * 0.2, topY + ch * 0.55);
+              ctx.lineTo(0, topY);
+              ctx.lineTo(cw * 0.2, topY + ch * 0.55);
+              ctx.lineTo(cw * 0.46, topY + ch * 0.15);
+              ctx.lineTo(cw / 2, topY + ch);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+              ctx.fillStyle = '#D90429';
+              ctx.beginPath();
+              ctx.arc(0, topY + ch * 0.68, 4.5, 0, Math.PI * 2);
+              ctx.fill();
+            } else if (faceArProp === 'cat_ears') {
+              const earW = fw * 0.34;
+              const earH = fh * 0.34;
+              const baseY = -fh * 0.42;
+              const wiggle = Math.sin(time * 0.005) * 0.05 + mouthAmp * 0.08;
+              [-1, 1].forEach((side) => {
+                ctx.save();
+                ctx.translate(side * fw * 0.34, baseY);
+                ctx.rotate(side * wiggle);
+                ctx.fillStyle = '#18181B';
+                ctx.strokeStyle = '#F472B6';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(-earW * 0.45, 0);
+                ctx.lineTo(side * earW * 0.15, -earH);
+                ctx.lineTo(earW * 0.45, 0);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+                ctx.fillStyle = 'rgba(244, 114, 182, 0.72)';
+                ctx.beginPath();
+                ctx.moveTo(-earW * 0.22, -4);
+                ctx.lineTo(side * earW * 0.12, -earH * 0.68);
+                ctx.lineTo(earW * 0.22, -4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+              });
+              // Whiskers + reactive nose bounce
+              ctx.strokeStyle = 'rgba(255,255,255,0.68)';
+              ctx.lineWidth = 1.6;
+              [-1, 1].forEach((side) => {
+                for (let k = -1; k <= 1; k++) {
+                  ctx.beginPath();
+                  ctx.moveTo(side * fw * 0.18, fh * 0.12 + k * 7);
+                  ctx.lineTo(side * fw * 0.48, fh * 0.1 + k * 11 + mouthAmp * 3);
+                  ctx.stroke();
+                }
+              });
+            } else if (faceArProp === 'blush_hearts') {
+              const cheekY = fh * 0.1;
+              [-1, 1].forEach((side) => {
+                const bx = side * fw * 0.32;
+                const g = ctx.createRadialGradient(bx, cheekY, 2, bx, cheekY, fw * 0.19);
+                g.addColorStop(0, `rgba(244, 63, 94, ${0.42 + mouthAmp * 0.25})`);
+                g.addColorStop(1, 'rgba(244, 63, 94, 0)');
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.arc(bx, cheekY, fw * 0.19, 0, Math.PI * 2);
+                ctx.fill();
+                // Floating mini heart
+                const hy = cheekY - 14 - Math.abs(Math.sin(time * 0.004 + side)) * 10 - mouthAmp * 8;
+                ctx.fillStyle = '#FB7185';
+                ctx.font = '700 14px system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('♥', bx, hy);
+              });
+            }
+
+            ctx.restore();
+          }
+
           // Live Lower-Third Caption Overlay (G-051)
           if (studioOverlayCaption.trim()) {
             ctx.save();
@@ -1124,6 +1348,8 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     skinBrightManual,
     bodySlim,
     arOverlay,
+    faceArProp,
+    xrayMode,
     screenShareActive,
     studioOverlayCaption,
     zoom,
@@ -1622,10 +1848,17 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
 
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 2) {
+      swipeStartRef.current = null;
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       pinchStartDistRef.current = Math.hypot(dx, dy);
       pinchStartZoomRef.current = zoom;
+    } else if (e.touches.length === 1 && drawer === 'none') {
+      swipeStartRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        t: Date.now(),
+      };
     }
   };
 
@@ -1635,6 +1868,27 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const next = Math.max(0.5, Math.min(5, pinchStartZoomRef.current * (Math.hypot(dx, dy) / pinchStartDistRef.current)));
       setZoom(Number(next.toFixed(1)));
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    pinchStartDistRef.current = null;
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start || e.changedTouches.length === 0 || drawer !== 'none') return;
+    const endTouch = e.changedTouches[0];
+    const dx = endTouch.clientX - start.x;
+    const dy = endTouch.clientY - start.y;
+    const dt = Date.now() - start.t;
+    // Horizontal Swipe-Tone gesture cycles CAMERA_FILTERS smoothly
+    if (Math.abs(dx) >= 65 && Math.abs(dy) < 55 && dt < 700) {
+      const idx = CAMERA_FILTERS.findIndex((f) => f.id === presetId);
+      const step = dx < 0 ? 1 : -1;
+      const nextFilter = CAMERA_FILTERS[(idx + step + CAMERA_FILTERS.length) % CAMERA_FILTERS.length];
+      setPresetId(nextFilter.id);
+      setSwipeToneLabel(`Tone: ${nextFilter.label}`);
+      if (swipeToneTimerRef.current) clearTimeout(swipeToneTimerRef.current);
+      swipeToneTimerRef.current = window.setTimeout(() => setSwipeToneLabel(null), 1600);
     }
   };
 
@@ -1748,6 +2002,14 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     setResolution((r) => order[(order.indexOf(r) + 1) % order.length]);
   };
 
+  const selectAspectSafely = (target: AspectRatioId) => {
+    if (aspectLocked && target !== aspectRatio) {
+      pushToast(`Aspect ratio (${aspectRatio === 'full' ? 'FULL' : aspectRatio}) is Crop-Locked. Tap Lock to unlock.`, 'info');
+      return;
+    }
+    setAspectRatio(target);
+  };
+
   const cycleAspect = () => {
     if (aspectLocked) {
       pushToast(`Aspect ratio (${aspectRatio === 'full' ? 'FULL' : aspectRatio}) is Crop-Locked. Tap Lock to unlock.`, 'info');
@@ -1817,6 +2079,8 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
 
   const killAllArAndOverlays = () => {
     setArOverlay('none');
+    setFaceArProp('none');
+    setXrayMode(false);
     setStudioOverlayCaption('');
     if (screenShareActive) {
       screenStreamRef.current?.getTracks().forEach((tr) => tr.stop());
@@ -1824,7 +2088,7 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
       if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
       setScreenShareActive(false);
     }
-    pushToast('All AR layers, stickers, screen-share & captions turned OFF.', 'info');
+    pushToast('All AR props, stickers, X-Ray, screen-share & captions turned OFF.', 'info');
   };
 
   const cycleTuningMode = () => {
@@ -1872,12 +2136,17 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
         onClick={handleViewfinderClick}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
-        onTouchEnd={() => {
-          pinchStartDistRef.current = null;
-        }}
+        onTouchEnd={handleTouchEnd}
         className="relative h-full w-full touch-none"
       >
         <canvas ref={canvasRef} className="h-full w-full object-cover" />
+
+        {/* Swipe-Tone HUD Toast */}
+        {swipeToneLabel && (
+          <div className="pointer-events-none absolute left-1/2 top-24 z-30 -translate-x-1/2 rounded-full border border-white/25 bg-black/75 px-3.5 py-1 text-xs font-bold text-[#A3E635] shadow-lg backdrop-blur-md">
+            {swipeToneLabel}
+          </div>
+        )}
 
         {/* Interactive Drag & Tap-to-Swap Hitbox for Dual PiP Camera / B-Roll */}
         {pipOverlayStyle && (
@@ -2076,15 +2345,13 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
             </div>
           )}
 
-          {cameraStatus === 'live' && (
-            <span
-              title="Camera tracks stop immediately when leaving studio or ending broadcast"
-              className="hidden md:inline-flex h-7 items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-950/65 px-2.5 text-[9px] font-semibold text-emerald-200"
-            >
-              <ShieldCheck className="h-3 w-3 text-emerald-400" />
-              <span>Cam Live · End Kills Tracks</span>
-            </span>
-          )}
+          <span
+            title="Local preview is private until you confirm 18+ consent and Go Live. Ending broadcast stops all media tracks immediately."
+            className="hidden md:inline-flex h-7 items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-950/65 px-2.5 text-[9px] font-semibold text-emerald-200"
+          >
+            <ShieldCheck className="h-3 w-3 text-emerald-400" />
+            <span>{cameraStatus === 'live' ? 'Local Private Preview · End Kills Tracks' : 'Private Studio Preview · Safe'}</span>
+          </span>
         </div>
 
         {/* Right: Flash, Macro, Timer, Grid, Share Link, Go Live */}
@@ -2199,37 +2466,69 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
       )}
 
       {camMode === 'reels' && (
-        <div className="absolute inset-x-3 top-14 sm:top-16 z-30 flex items-center justify-center gap-1.5 overflow-x-auto no-scrollbar">
-          {REELS_FORMATS.map((rf) => (
+        <div className="absolute inset-x-3 top-14 sm:top-16 z-30 flex flex-col items-center gap-1.5">
+          <div className="flex max-w-full items-center justify-center gap-1.5 overflow-x-auto no-scrollbar">
+            {REELS_FORMATS.map((rf) => (
+              <button
+                key={rf.id}
+                type="button"
+                onClick={() => selectAspectSafely(rf.id)}
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold border cursor-pointer ${
+                  aspectRatio === rf.id
+                    ? 'border-[#A3E635] bg-[#A3E635]/20 text-[#A3E635]'
+                    : 'border-white/15 bg-black/55 text-white/80'
+                }`}
+              >
+                {rf.label}
+              </button>
+            ))}
             <button
-              key={rf.id}
               type="button"
-              onClick={() => setAspectRatio(rf.id)}
-              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold border cursor-pointer ${
-                aspectRatio === rf.id
-                  ? 'border-[#A3E635] bg-[#A3E635]/20 text-[#A3E635]'
-                  : 'border-white/15 bg-black/55 text-white/80'
-              }`}
+              onClick={() =>
+                setReelDuration((d) => REEL_DURATIONS[(REEL_DURATIONS.indexOf(d) + 1) % REEL_DURATIONS.length])
+              }
+              title="Clip duration convention (20s default quick clip)"
+              className="shrink-0 rounded-full border border-[#E8C86A]/60 bg-black/55 px-2 py-0.5 text-[10px] font-mono-nums font-bold text-[#E8C86A] cursor-pointer"
             >
-              {rf.label}
+              {reelDuration}s
             </button>
-          ))}
-          <button
-            type="button"
-            onClick={() =>
-              setReelDuration((d) => REEL_DURATIONS[(REEL_DURATIONS.indexOf(d) + 1) % REEL_DURATIONS.length])
-            }
-            className="shrink-0 rounded-full border border-[#E8C86A]/60 bg-black/55 px-2 py-0.5 text-[10px] font-mono-nums font-bold text-[#E8C86A] cursor-pointer"
-          >
-            {reelDuration}s
-          </button>
-          <button
-            type="button"
-            onClick={() => setReelSpeed((s) => (s === 0.5 ? 1 : s === 1 ? 1.5 : s === 1.5 ? 2 : 0.5))}
-            className="shrink-0 rounded-full border border-white/15 bg-black/55 px-2 py-0.5 text-[10px] font-mono-nums cursor-pointer"
-          >
-            {reelSpeed}x
-          </button>
+            <button
+              type="button"
+              onClick={() => setReelSpeed((s) => (s === 0.5 ? 1 : s === 1 ? 1.5 : s === 1.5 ? 2 : 0.5))}
+              className="shrink-0 rounded-full border border-white/15 bg-black/55 px-2 py-0.5 text-[10px] font-mono-nums cursor-pointer"
+            >
+              {reelSpeed}x
+            </button>
+          </div>
+          {/* 6-Clip Reel Quick Strip + 1-Tap Copy [clip:id] for Room/DM Share */}
+          {mediaLibrary.some((m) => m.type === 'video') && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex max-w-full items-center gap-1 overflow-x-auto no-scrollbar rounded-full border border-white/15 bg-black/65 px-2 py-1 backdrop-blur-md"
+            >
+              <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider text-white/60">
+                Clips ({Math.min(6, mediaLibrary.filter((m) => m.type === 'video').length)}/6)
+              </span>
+              {mediaLibrary
+                .filter((m) => m.type === 'video')
+                .slice(0, 6)
+                .map((clip, i) => (
+                  <button
+                    key={clip.id}
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(`[clip:${clip.id}]`).catch(() => {});
+                      pushToast(`Copied [clip:${clip.id}] — paste in Room Chat or Inbox DM!`, 'success');
+                    }}
+                    title={`Copy [clip:${clip.id}] to share in room`}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-white/10 hover:bg-[#A3E635] hover:text-black px-2 py-0.5 text-[9px] font-mono-nums font-semibold text-white/90 cursor-pointer"
+                  >
+                    <Copy className="h-2.5 w-2.5" />
+                    <span>#{i + 1}</span>
+                  </button>
+                ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -2242,8 +2541,15 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
           {
             id: 'beauty' as DrawerTab,
             icon: Sparkles,
-            active: drawer === 'beauty' || beautyProfile !== 'off' || skinBrightAuto || skinBrightManual > 0,
-            label: 'Beauty & Tone',
+            active:
+              drawer === 'beauty' ||
+              beautyProfile !== 'off' ||
+              skinBrightAuto ||
+              skinBrightManual > 0 ||
+              faceArProp !== 'none' ||
+              xrayMode ||
+              arOverlay !== 'none',
+            label: 'Beauty & AR',
           },
           { id: 'tune' as DrawerTab, icon: SlidersHorizontal, active: drawer === 'tune' || tuningMode !== 'auto', label: 'Pro Tune' },
           { id: 'audio' as DrawerTab, icon: audioEnabled ? Mic : MicOff, active: drawer === 'audio' || ancEnabled, label: 'Mic & ANC' },
@@ -2529,6 +2835,47 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
                       onClick={() => setArOverlay(id)}
                       className={`h-7 rounded-lg font-semibold cursor-pointer ${
                         arOverlay === id ? 'bg-[#A3E635] text-black' : 'bg-white/10 text-white/80'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
+                    Face-Tracked AR Props
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setXrayMode((v) => !v)}
+                    className={`h-6 rounded-md border px-2 text-[10px] font-bold cursor-pointer ${
+                      xrayMode
+                        ? 'border-cyan-400 bg-cyan-400/25 text-cyan-200'
+                        : 'border-white/15 bg-white/10 text-white/75'
+                    }`}
+                  >
+                    X-Ray FX: {xrayMode ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+                <div className="grid grid-cols-5 gap-1 text-[10px]">
+                  {(
+                    [
+                      ['none', 'Off'],
+                      ['shades', 'Shades'],
+                      ['crown', 'Crown'],
+                      ['cat_ears', 'Ears'],
+                      ['blush_hearts', 'Blush'],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setFaceArProp(id)}
+                      className={`h-7 rounded-lg font-semibold cursor-pointer ${
+                        faceArProp === id ? 'bg-[#E8C86A] text-black' : 'bg-white/10 text-white/80'
                       }`}
                     >
                       {label}

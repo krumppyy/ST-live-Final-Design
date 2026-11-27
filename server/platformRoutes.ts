@@ -805,11 +805,19 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
   });
 
   router.get('/rooms/:id/visitors', (req, res) => {
-    const session = requireAuth(req, res);
-    if (!session) return;
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 24;
-    res.json(listRoomVisitorsDb(req.params.id, session.uid, page, limit));
+    const rawTeam = req.headers['x-team-token'];
+    if (typeof rawTeam === 'string' && rawTeam.trim()) {
+      const verified = verifyTeamToken(rawTeam.trim());
+      if (!verified) {
+        return res.status(401).json({ error: 'Invalid Team Door token.' });
+      }
+      return res.json(listRoomVisitorsDb(req.params.id, '', page, limit, true));
+    }
+    const session = requireAuth(req, res);
+    if (!session) return;
+    res.json(listRoomVisitorsDb(req.params.id, session.uid, page, limit, false));
   });
 
   router.get('/rooms/:id/admins', (req, res) => {

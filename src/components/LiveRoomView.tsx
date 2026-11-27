@@ -204,6 +204,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState('');
   const [pinBusy, setPinBusy] = useState(false);
+  const [fullBlockedMsg, setFullBlockedMsg] = useState<string | null>(null);
 
   // Celebratory FX overlays (Nova Burst 500 & Crowd Confetti/Pulse FX — G-013)
   const [novaFlash, setNovaFlash] = useState<{ sender: string; gift: string; coins: number; fxKind?: 'confetti' | 'pulse' | 'nova' } | null>(null);
@@ -637,6 +638,13 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             setTimeout(() => setNovaFlash(null), 2600);
           }
         }
+      } else if (event === 'room:join_blocked' && payload) {
+        const data = payload as { roomId?: string; message?: string };
+        if (data.roomId === liveStream.id) {
+          setFullBlockedMsg(
+            data.message || 'Room is at FULL capacity (1.0M viewers). Hosts and invited Co-Hosts can still join.'
+          );
+        }
       } else if (event === 'room:ended' && payload) {
         const data = payload as { roomId?: string; reason?: string };
         if (data.roomId === liveStream.id) {
@@ -975,8 +983,35 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
 
   return (
     <main className="sl-fluid-page pt-4 pb-28 md:pb-12 relative">
+      {/* FULL Room Capacity Gate Overlay (1,000,000 viewers cap; Hosts/Co-Hosts/Staff bypass) */}
+      {fullBlockedMsg && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-rose-500/40 bg-[var(--bg-surface)] p-6 text-center space-y-4 shadow-2xl">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/15 text-rose-500">
+              <Users className="h-6 w-6" />
+            </div>
+            <div>
+              <span className="inline-flex items-center rounded-full bg-rose-600 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                Room FULL · 1.0M Cap
+              </span>
+              <h2 className="mt-2 font-display text-lg font-bold">Broadcast Room at Capacity</h2>
+              <p className="mt-1 text-xs text-[var(--fg-secondary)] leading-relaxed">
+                {fullBlockedMsg}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onBack}
+              className="w-full h-10 rounded-xl bg-[#D90429] text-xs font-bold text-white hover:bg-[#b80322] cursor-pointer"
+            >
+              Return to Live Lobby
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* PIN Lock Gate Overlay */}
-      {liveStream.isLocked && !pinUnlocked && (
+      {liveStream.isLocked && !pinUnlocked && !fullBlockedMsg && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
           <div className="w-full max-w-sm rounded-2xl border border-amber-500/40 bg-[var(--bg-surface)] p-6 text-center space-y-4 shadow-2xl">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
@@ -1314,12 +1349,13 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                 <Copy className="h-3.5 w-3.5" />
                 <span>Copy Direct Room Link</span>
               </button>
-              <div className="grid grid-cols-3 gap-1.5 text-[11px] font-medium">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[11px] font-medium">
                 {[
                   { label: 'X / Twitter', href: `https://twitter.com/intent/tweet?text=${shareText}&url=${shareUrlEnc}` },
                   { label: 'WhatsApp', href: `https://wa.me/?text=${shareText}%20${shareUrlEnc}` },
                   { label: 'Telegram', href: `https://t.me/share/url?url=${shareUrlEnc}&text=${shareText}` },
                   { label: 'Reddit', href: `https://reddit.com/submit?url=${shareUrlEnc}&title=${shareText}` },
+                  { label: 'Facebook', href: `https://www.facebook.com/sharer/sharer.php?u=${shareUrlEnc}` },
                   { label: 'Discord', href: roomShareUrl },
                   { label: 'TikTok', href: roomShareUrl },
                 ].map((s) => (
@@ -1363,10 +1399,18 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   {visitorsData.visitors.map((v, i) => (
                     <div
                       key={`${v.visitorUid}-${i}`}
-                      className="flex items-center justify-between rounded-lg bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11px]"
+                      className="flex items-center justify-between gap-2 rounded-lg bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[11px]"
                     >
-                      <span className="font-semibold truncate">{v.visitorName}</span>
-                      <span className="font-mono-nums text-[10px] text-[var(--fg-muted)]">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className="shrink-0">{countryFlag(v.visitorCountryCode || 'US')}</span>
+                        <span className="font-semibold truncate">{v.visitorName}</span>
+                        {v.visitorNumericId && (
+                          <span className="shrink-0 rounded bg-[var(--bg-surface)] px-1 py-0.5 font-mono-nums text-[9px] text-[var(--fg-muted)]">
+                            #{v.visitorNumericId}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono-nums text-[10px] text-[var(--fg-muted)] shrink-0">
                         {new Date(v.visitedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>

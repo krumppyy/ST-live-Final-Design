@@ -1009,18 +1009,26 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                           const tokMatch = plain.trim().match(/^\[(photo|clip):([a-zA-Z0-9_-]{3,48})\]$/);
                           if (tokMatch) {
                             const asset = mediaLibrary.find((a) => a.id === tokMatch[2]);
-                            if (asset) {
+                            const safeUrl =
+                              asset &&
+                              (asset.url.startsWith('https://') ||
+                                asset.url.startsWith('data:image/') ||
+                                asset.url.startsWith('blob:'))
+                                ? asset.url
+                                : null;
+                            if (asset && safeUrl) {
                               return (
                                 <div className="space-y-1">
                                   {asset.type === 'photo' ? (
                                     <img
-                                      src={asset.url}
+                                      src={safeUrl}
                                       alt={asset.label}
+                                      referrerPolicy="no-referrer"
                                       className="max-h-52 rounded-xl object-cover"
                                     />
                                   ) : (
                                     <video
-                                      src={asset.url}
+                                      src={safeUrl}
                                       controls
                                       className="max-h-52 rounded-xl bg-black object-cover"
                                     />

@@ -40,7 +40,7 @@ import {
 } from './server/db';
 import { MultiplayerGameEngine } from './server/games';
 import { createPlatformRouter } from './server/platformRoutes';
-import { incrementHostDailyTaskDb, isBlockedByHost } from './server/platformStore';
+import { incrementHostDailyTaskDb, isBlockedByHost, listRoomAdminsDb } from './server/platformStore';
 import { checkWsFlood, stripProtoPollution, threatScan } from './server/security';
 import type {
   AdminPermissions,
@@ -545,6 +545,20 @@ app.get('/api/streams', (req, res) => {
     list = list.filter((s) => s.category === category);
   }
 
+  const feed = typeof req.query.feed === 'string' ? req.query.feed.trim().toLowerCase() : '';
+  if (feed === 'party') {
+    list = list.filter((s) => ['multi_guest', 'audio', 'pk', 'games'].includes(s.category));
+  } else if (feed === 'following') {
+    const followingParam = typeof req.query.following === 'string' ? req.query.following : '';
+    const allowedUids = new Set(
+      followingParam
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean)
+    );
+    list = list.filter((s) => allowedUids.has(s.hostUid));
+  }
+
   const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
   if (q) {
     list = list.filter(
@@ -552,11 +566,17 @@ app.get('/api/streams', (req, res) => {
         s.title.toLowerCase().includes(q) ||
         s.hostName.toLowerCase().includes(q) ||
         s.hostUid.toLowerCase().includes(q) ||
+        s.language.toLowerCase().includes(q) ||
+        s.category.toLowerCase().includes(q) ||
         String(s.hostNumericId || '').includes(q.replace('#', ''))
     );
   }
 
   const sort = typeof req.query.sort === 'string' ? req.query.sort.trim().toLowerCase() : '';
+  const userCountry =
+    typeof req.query.userCountry === 'string' && req.query.userCountry.trim().length >= 2
+      ? req.query.userCountry.trim().toUpperCase().slice(0, 2)
+      : 'US';
   if (sort === 'new' || sort === 'debut') {
     list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   } else if (sort === 'popular') {
@@ -566,6 +586,15 @@ app.get('/api/streams', (req, res) => {
       (s.totalGiftsCoins || 0) +
       (s.followerCount || 0) * 10;
     list.sort((a, b) => popularScore(b) - popularScore(a));
+  } else if (sort === 'nearby' || feed === 'nearby') {
+    list.sort((a, b) => {
+      const nearB = (b.countryCode || 'US').toUpperCase() === userCountry ? 1 : 0;
+      const nearA = (a.countryCode || 'US').toUpperCase() === userCountry ? 1 : 0;
+      if (nearB !== nearA) return nearB - nearA;
+      return b.viewerCount - a.viewerCount;
+    });
+  } else {
+    list.sort((a, b) => b.viewerCount - a.viewerCount);
   }
 
   const total = list.length;
@@ -1422,9 +1451,27 @@ wss.on('connection', (ws, req) => {
       const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
       const stream = listAllStreams().find((s) => s.id === roomId);
       if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+
+      // Block regular visitors at FULL (1.0M) capacity; host, invited/live co-hosts, room admins & staff bypass
+      if (Number(stream.viewerCount || 0) >= 1_000_000) {
+        const uid = meta.session?.uid || '';
+        const isHost = uid === stream.hostUid;
+        const isStaff = meta.session?.role === 'staff';
+        const isCoHost = Boolean(uid && rt.coHosts.some((c) => c.uid === uid));
+        const isAdmin = Boolean(uid && listRoomAdminsDb(roomId).some((a) => a.uid === uid));
+        if (!isHost && !isStaff && !isCoHost && !isAdmin) {
+          sendWs(ws, 'room:join_blocked', {
+            roomId,
+            reason: 'FULL',
+            message: 'Room is at FULL capacity (1.0M viewers). Hosts and invited Co-Hosts can still join.',
+          });
+          return;
+        }
+      }
+
       const wasInRoom = meta.subscribedRoomId === roomId;
       meta.subscribedRoomId = roomId;
-      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
       // VIP / High-level join fanfare announcement (G-034)
       if (!wasInRoom && meta.session && meta.session.uid !== stream.hostUid) {
         const isVip = Boolean(meta.session.vipUntil && meta.session.vipUntil > Date.now());
