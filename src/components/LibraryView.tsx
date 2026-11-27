@@ -87,6 +87,45 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
     if (!file) return;
 
     const createdAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Round-trip restore for StreamLive Library Export JSON archives
+    if (file.type === 'application/json' || file.name.toLowerCase().endsWith('.json')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(String(reader.result || '{}'));
+          const items = Array.isArray(parsed?.items) ? parsed.items : [];
+          let restored = 0;
+          for (const entry of items.slice(0, 24)) {
+            if (
+              entry &&
+              entry.type === 'photo' &&
+              typeof entry.dataUrl === 'string' &&
+              entry.dataUrl.startsWith('data:image/')
+            ) {
+              addMediaAsset({
+                id: `impj-${Date.now()}-${restored}`,
+                type: 'photo',
+                url: entry.dataUrl,
+                label: String(entry.label || 'Restored Photo').slice(0, 48),
+                createdAt: String(entry.createdAt || createdAt),
+              });
+              restored++;
+            }
+          }
+          if (restored > 0) {
+            pushToast(`Restored ${restored} photo(s) from StreamLive Library JSON archive.`, 'success');
+          } else {
+            pushToast('No embedded photos found in JSON archive.', 'info');
+          }
+        } catch {
+          pushToast('Invalid JSON archive file.', 'error');
+        }
+      };
+      reader.readAsText(file);
+      return;
+    }
+
     if (file.type.startsWith('video/')) {
       const url = URL.createObjectURL(file);
       addMediaAsset({
@@ -314,7 +353,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           <input
             ref={importInputRef}
             type="file"
-            accept="image/*,video/*"
+            accept="image/*,video/*,.json,application/json"
             onChange={handleImportMedia}
             className="hidden"
           />

@@ -43,6 +43,8 @@ import {
   UserPlus,
   Users,
   Video,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
@@ -225,6 +227,81 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [coHostLocalStream, setCoHostLocalStream] = useState<MediaStream | null>(null);
   const [coHostRemoteStreams, setCoHostRemoteStreams] = useState<Record<string, MediaStream>>({});
   const [coHostPublishing, setCoHostPublishing] = useState(false);
+
+  // Per-room sound preference persisted per roomId + live RTT latency & gift combo drip streak
+  const [roomSoundMuted, setRoomSoundMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(`stlive_room_sound_${stream.id}`) === 'muted';
+    } catch {
+      return false;
+    }
+  });
+  const [roomLatencyMs, setRoomLatencyMs] = useState<number | null>(null);
+  const [comboStreak, setComboStreak] = useState<{ gift: string; count: number } | null>(null);
+  const comboStreakTimerRef = useRef<number | null>(null);
+
+  const formatViewerCount = (n: number) =>
+    n >= 1_000_000
+      ? `${(n / 1_000_000).toFixed(1)}M`
+      : n >= 1000
+        ? `${(n / 1000).toFixed(1)}K`
+        : String(n);
+
+  const toggleRoomSound = () => {
+    setRoomSoundMuted((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(`stlive_room_sound_${liveStream.id}`, next ? 'muted' : 'on');
+      } catch {
+        /* ignore */
+      }
+      pushToast(next ? 'Room audio muted (saved for this room).' : 'Room audio unmuted.', 'info');
+      return next;
+    });
+  };
+
+  // Escape closes open popovers/guides first, then navigates back cleanly
+  useEffect(() => {
+    const onRoomKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        (e.target as HTMLElement).blur();
+        return;
+      }
+      if (activePopover !== 'none') {
+        setActivePopover('none');
+      } else if (showTipGuide) {
+        setShowTipGuide(false);
+      } else if (showAadsGuide) {
+        setShowAadsGuide(false);
+      } else {
+        onBack();
+      }
+    };
+    window.addEventListener('keydown', onRoomKeyDown);
+    return () => window.removeEventListener('keydown', onRoomKeyDown);
+  }, [activePopover, showTipGuide, showAadsGuide, onBack]);
+
+  // Measure live room RTT latency cleanly on room entry & every 30s
+  useEffect(() => {
+    let alive = true;
+    const probe = async () => {
+      const t0 = performance.now();
+      try {
+        await fetch('/api/config/rtc');
+        if (alive) setRoomLatencyMs(Math.max(1, Math.round(performance.now() - t0)));
+      } catch {
+        /* ignore */
+      }
+    };
+    probe();
+    const id = window.setInterval(probe, 30000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [liveStream.id]);
 
   const gimbal = useGimbal('off');
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -790,6 +867,12 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
         setNovaFlash({ sender: session.displayName, gift: giftName, coins: data.chargedCoins || baseCoins });
         setTimeout(() => setNovaFlash(null), 2600);
       }
+      setComboStreak((prev) => ({
+        gift: giftName,
+        count: prev && prev.gift === giftName ? prev.count + giftCombo : giftCombo,
+      }));
+      if (comboStreakTimerRef.current) window.clearTimeout(comboStreakTimerRef.current);
+      comboStreakTimerRef.current = window.setTimeout(() => setComboStreak(null), 4000);
       pushToast(
         `Sent ${giftName}${giftCombo > 1 ? ` ×${giftCombo}` : ''} (-${data.chargedCoins}c · +${data.hostDiamonds ?? 0}D to Host)`,
         'success'
@@ -1114,6 +1197,19 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           >
             <Share2 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Share</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={toggleRoomSound}
+            title={roomSoundMuted ? 'Unmute Room Audio (persisted per room)' : 'Mute Room Audio (persisted per room)'}
+            className={`inline-flex h-9 w-9 items-center justify-center rounded-lg border cursor-pointer ${
+              roomSoundMuted
+                ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-300'
+                : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)] hover:border-[var(--accent-primary)]'
+            }`}
+          >
+            {roomSoundMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
           </button>
 
           <button
@@ -1659,7 +1755,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                     <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-bold text-white">
                       <span className="h-1.5 w-1.5 rounded-full bg-[#D90429]" />
                       <span>LIVE</span>
-                      <span className="font-mono-nums opacity-80">{liveStream.viewerCount}</span>
+                      <span className="font-mono-nums opacity-80">{formatViewerCount(liveStream.viewerCount)}</span>
                     </div>
                     <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
                       <button
@@ -1735,7 +1831,12 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                             {liveStream.hostNumericId && (
                               <span className="opacity-70">#{liveStream.hostNumericId}</span>
                             )}
-                            <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
+                            <span>· {formatViewerCount(liveStream.viewerCount)} {t('viewers')}</span>
+                            {roomLatencyMs !== null && (
+                              <span className="rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-mono-nums text-white/80">
+                                {roomLatencyMs}ms
+                              </span>
+                            )}
                             {liveStream.consentVerified && (
                               <span className="rounded bg-emerald-500/25 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
                                 CONSENTED
@@ -2161,7 +2262,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                             <video
                               autoPlay
                               playsInline
-                              muted={isSelfCoHost}
+                              muted={isSelfCoHost || roomSoundMuted}
                               ref={(el) => {
                                 if (el && el.srcObject !== mediaFeed) {
                                   el.srcObject = mediaFeed;
@@ -2315,7 +2416,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             <button
               type="button"
               onClick={() => setTranslateOn((v) => !v)}
-              title="Auto-Translate Chat to your UI language"
+              title="Opt-in Auto-Translate Chat (sends text externally; media & sticker tokens skipped)"
               className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-semibold cursor-pointer ${
                 translateOn
                   ? 'border-[var(--accent-secondary)] bg-[var(--accent-secondary)]/15 text-[var(--accent-secondary)]'
@@ -2326,6 +2427,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
               <span>{translateOn ? `Auto (${locale.toUpperCase()})` : 'Translate'}</span>
             </button>
           </div>
+          {translateOn && (
+            <div className="border-b border-[var(--border-hairline)] bg-[var(--bg-elevated)]/60 px-3.5 py-1 text-[10px] text-[var(--fg-muted)]">
+              Opt-in external translation active · [photo:], [clip:] &amp; [st:] tokens skipped
+            </div>
+          )}
 
           <div className="flex-1 overflow-y-auto px-3.5 py-2.5 space-y-2 text-sm">
             {messages.map((msg) => {
@@ -2511,11 +2617,18 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   </button>
                 ))}
               </div>
-              {discountPct > 0 && (
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-bold text-emerald-700 dark:text-emerald-400">
-                  -{discountPct}% OFF
-                </span>
-              )}
+              <div className="flex items-center gap-1.5">
+                {comboStreak && (
+                  <span className="rounded bg-[var(--accent-primary)]/20 border border-[var(--accent-primary)]/40 px-1.5 py-0.5 font-mono-nums font-bold text-[var(--accent-primary)] motion-safe:animate-pulse">
+                    {comboStreak.gift} ×{comboStreak.count}
+                  </span>
+                )}
+                {discountPct > 0 && (
+                  <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-bold text-emerald-700 dark:text-emerald-400">
+                    -{discountPct}% OFF
+                  </span>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">

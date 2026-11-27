@@ -1,7 +1,9 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Flame,
   Globe,
   Grid2X2,
@@ -46,7 +48,7 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
   const [multiView, setMultiView] = useState(false);
   const [multiActiveSoundId, setMultiActiveSoundId] = useState<string | null>(null);
   const [multiHiddenIds, setMultiHiddenIds] = useState<string[]>([]);
-  const [pageLimit, setPageLimit] = useState<number>(24);
+  const [lobbyPage, setLobbyPage] = useState<number>(1);
   const [showWideRail, setShowWideRail] = useState(true);
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -160,6 +162,18 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
 
     return list;
   }, [streams, category, selectedCountry, feedTab, followingHostUids, session?.countryCode, query]);
+
+  const LOBBY_PAGE_SIZE = 24;
+  const totalLobbyPages = Math.max(1, Math.ceil(filtered.length / LOBBY_PAGE_SIZE));
+  const safeLobbyPage = Math.min(lobbyPage, totalLobbyPages);
+  const pagedFiltered = useMemo(
+    () => filtered.slice((safeLobbyPage - 1) * LOBBY_PAGE_SIZE, safeLobbyPage * LOBBY_PAGE_SIZE),
+    [filtered, safeLobbyPage]
+  );
+
+  useEffect(() => {
+    setLobbyPage(1);
+  }, [feedTab, category, selectedCountry, query]);
 
   const topTrending = useMemo(
     () => [...streams].sort((a, b) => b.viewerCount - a.viewerCount),
@@ -588,7 +602,7 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
                   : 'lg:grid-cols-4 xl:grid-cols-5 min-[1920px]:grid-cols-6 min-[2480px]:grid-cols-7 min-[3000px]:grid-cols-8'
               }`}
             >
-              {filtered.slice(0, pageLimit).map((stream) => {
+              {pagedFiltered.map((stream) => {
                 const filledSeats = stream.seats?.filter((s) => Boolean(s.uid)).length ?? 1;
                 const isRoomFull = stream.maxSeats > 0 && filledSeats >= stream.maxSeats;
                 return (
@@ -688,15 +702,38 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
               })}
             </div>
           )}
-          {!multiView && filtered.length > pageLimit && (
-            <div className="mt-4 flex justify-center">
-              <button
-                type="button"
-                onClick={() => setPageLimit((n) => n + 24)}
-                className="h-9 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
-              >
-                Load More ({filtered.length - pageLimit} remaining)
-              </button>
+          {!multiView && filtered.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 py-2 text-xs text-[var(--fg-secondary)]">
+              <span className="font-mono-nums">
+                Showing {(safeLobbyPage - 1) * LOBBY_PAGE_SIZE + 1}–
+                {Math.min(safeLobbyPage * LOBBY_PAGE_SIZE, filtered.length)} of {filtered.length}{' '}
+                live rooms ({LOBBY_PAGE_SIZE}/page)
+              </span>
+              {totalLobbyPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safeLobbyPage <= 1}
+                    onClick={() => setLobbyPage((p) => Math.max(1, p - 1))}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] disabled:opacity-40 hover:border-[var(--accent-primary)] cursor-pointer"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                    <span>Prev</span>
+                  </button>
+                  <span className="px-2 font-mono-nums font-semibold text-[var(--fg-primary)]">
+                    {safeLobbyPage} / {totalLobbyPages}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={safeLobbyPage >= totalLobbyPages}
+                    onClick={() => setLobbyPage((p) => Math.min(totalLobbyPages, p + 1))}
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] disabled:opacity-40 hover:border-[var(--accent-primary)] cursor-pointer"
+                  >
+                    <span>Next</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </section>

@@ -153,6 +153,7 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
     'overview' | 'people' | 'safety' | 'partners' | 'audit'
   >('overview');
   const [memberQuery, setMemberQuery] = useState('');
+  const [membersPage, setMembersPage] = useState(1);
   const [actionMsg, setActionMsg] = useState<{ text: string; tone: 'ok' | 'err' } | null>(null);
 
   // Tier 3 Audited Coin Grant form
@@ -572,20 +573,36 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
               </section>
             )}
 
-            {activeSection === 'people' && (
+            {activeSection === 'people' && (() => {
+              const MEMBERS_PAGE_SIZE = 24;
+              const totalPages = Math.max(1, Math.ceil(filteredMembers.length / MEMBERS_PAGE_SIZE));
+              const safePage = Math.min(membersPage, totalPages);
+              const pagedMembers = filteredMembers.slice(
+                (safePage - 1) * MEMBERS_PAGE_SIZE,
+                safePage * MEMBERS_PAGE_SIZE
+              );
+              return (
               <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 space-y-3">
-                <div className="relative max-w-md">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--fg-muted)]" />
-                  <input
-                    type="search"
-                    value={memberQuery}
-                    onChange={(e) => setMemberQuery(e.target.value)}
-                    placeholder="Search people by name, UID, #ID, or role..."
-                    className="h-9 w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] pl-9 pr-3 text-xs text-[var(--fg-primary)]"
-                  />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="relative flex-1 min-w-[220px] max-w-md">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--fg-muted)]" />
+                    <input
+                      type="search"
+                      value={memberQuery}
+                      onChange={(e) => {
+                        setMemberQuery(e.target.value);
+                        setMembersPage(1);
+                      }}
+                      placeholder="Search people by name, UID, #ID, or role..."
+                      className="h-9 w-full rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] pl-9 pr-3 text-xs text-[var(--fg-primary)]"
+                    />
+                  </div>
+                  <span className="font-mono-nums text-[11px] text-[var(--fg-muted)]">
+                    {filteredMembers.length} people · Page {safePage}/{totalPages} (24/page)
+                  </span>
                 </div>
                 <div className="space-y-1.5 max-h-[540px] overflow-y-auto">
-                  {filteredMembers.map((m) => (
+                  {pagedMembers.map((m) => (
                     <div
                       key={m.uid}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3 py-2 text-xs"
@@ -657,8 +674,32 @@ export const TeamDoorView: React.FC<TeamDoorViewProps> = ({
                     </div>
                   ))}
                 </div>
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--border-hairline)] text-xs">
+                    <button
+                      type="button"
+                      disabled={safePage <= 1}
+                      onClick={() => setMembersPage((p) => Math.max(1, p - 1))}
+                      className="h-7 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 font-semibold disabled:opacity-40 cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    <span className="font-mono-nums text-[var(--fg-secondary)]">
+                      {safePage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setMembersPage((p) => Math.min(totalPages, p + 1))}
+                      className="h-7 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 font-semibold disabled:opacity-40 cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </section>
-            )}
+              );
+            })()}
 
             {activeSection === 'safety' && (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
