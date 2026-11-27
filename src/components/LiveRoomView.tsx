@@ -217,6 +217,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     visitors: RoomVisitor[];
     totalCount: number;
     truncatedForFree: boolean;
+    page?: number;
+    pageSize?: number;
+    totalPages?: number;
+    sampled?: boolean;
   } | null>(null);
   const [reportReason, setReportReason] = useState(REPORT_REASONS[0]);
   const [translateOn, setTranslateOn] = useState(autoTranslateChat);
@@ -882,6 +886,15 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     }
   };
 
+  const fetchVisitorsPage = async (pageNum: number) => {
+    const res = await authFetch(
+      `/api/rooms/${encodeURIComponent(liveStream.id)}/visitors?page=${pageNum}&limit=24`
+    );
+    if (res.ok) {
+      setVisitorsData(await res.json());
+    }
+  };
+
   const handleLoadVisitors = async () => {
     if (!session) {
       onRequireLogin();
@@ -892,10 +905,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       return;
     }
     setActivePopover('visitors');
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(liveStream.id)}/visitors`);
-    if (res.ok) {
-      setVisitorsData(await res.json());
-    }
+    await fetchVisitorsPage(1);
   };
 
   const handleSubmitReport = async () => {
@@ -1338,7 +1348,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           {activePopover === 'visitors' && (
             <div className="absolute right-0 top-11 z-40 w-64 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-3 shadow-2xl space-y-2">
               <div className="flex items-center justify-between text-xs font-semibold">
-                <span>Recent Visitors ({visitorsData?.totalCount ?? 0})</span>
+                <span>
+                  Recent Visitors ({visitorsData?.totalCount ?? 0}
+                  {visitorsData?.sampled ? '+' : ''})
+                </span>
                 <button type="button" onClick={() => setActivePopover('none')} className="cursor-pointer">
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -1361,6 +1374,33 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   {visitorsData.truncatedForFree && (
                     <div className="rounded-lg bg-amber-500/12 border border-amber-500/30 p-2 text-[10px] text-amber-700 dark:text-amber-300">
                       Showing 2 free previews. Activate VIP in Me Hub to see full visitor history.
+                    </div>
+                  )}
+                  {(visitorsData.totalPages ?? 1) > 1 && !visitorsData.truncatedForFree && (
+                    <div className="flex items-center justify-between pt-1.5 border-t border-[var(--border-hairline)] text-[10px]">
+                      <button
+                        type="button"
+                        disabled={(visitorsData.page ?? 1) <= 1}
+                        onClick={() => fetchVisitorsPage(Math.max(1, (visitorsData.page ?? 1) - 1))}
+                        className="rounded border border-[var(--border-hairline)] px-2 py-0.5 font-semibold disabled:opacity-40 cursor-pointer"
+                      >
+                        Prev
+                      </button>
+                      <span className="font-mono-nums text-[var(--fg-muted)]">
+                        {visitorsData.page ?? 1} / {visitorsData.totalPages} (24/pg)
+                      </span>
+                      <button
+                        type="button"
+                        disabled={(visitorsData.page ?? 1) >= (visitorsData.totalPages ?? 1)}
+                        onClick={() =>
+                          fetchVisitorsPage(
+                            Math.min(visitorsData.totalPages ?? 1, (visitorsData.page ?? 1) + 1)
+                          )
+                        }
+                        className="rounded border border-[var(--border-hairline)] px-2 py-0.5 font-semibold disabled:opacity-40 cursor-pointer"
+                      >
+                        Next
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1832,6 +1872,11 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                               <span className="opacity-70">#{liveStream.hostNumericId}</span>
                             )}
                             <span>· {formatViewerCount(liveStream.viewerCount)} {t('viewers')}</span>
+                            {(liveStream.isFull || liveStream.viewerCount >= 1_000_000) && (
+                              <span className="rounded bg-amber-500/30 px-1.5 py-0.5 text-[10px] font-bold text-amber-200">
+                                FULL
+                              </span>
+                            )}
                             {roomLatencyMs !== null && (
                               <span className="rounded bg-black/55 px-1.5 py-0.5 text-[10px] font-mono-nums text-white/80">
                                 {roomLatencyMs}ms

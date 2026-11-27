@@ -525,8 +525,64 @@ app.get('/api/users/directory', (_req, res) => {
 // REST API: Streams
 // ---------------------------------------------------------------------------
 
-app.get('/api/streams', (_req, res) => {
-  res.json({ streams: hydrateStreams() });
+app.get('/api/streams', (req, res) => {
+  let list = hydrateStreams().map((s) => {
+    const clampedViewers = Math.min(1_000_000, Math.max(0, Number(s.viewerCount || 0)));
+    return {
+      ...s,
+      viewerCount: clampedViewers,
+      isFull: Boolean(s.isFull) || clampedViewers >= 1_000_000,
+    };
+  });
+
+  const country = typeof req.query.country === 'string' ? req.query.country.trim().toUpperCase() : '';
+  if (country && country !== 'ALL') {
+    list = list.filter((s) => (s.countryCode || 'US').toUpperCase() === country);
+  }
+
+  const category = typeof req.query.category === 'string' ? req.query.category.trim().toLowerCase() : '';
+  if (category && category !== 'all') {
+    list = list.filter((s) => s.category === category);
+  }
+
+  const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
+  if (q) {
+    list = list.filter(
+      (s) =>
+        s.title.toLowerCase().includes(q) ||
+        s.hostName.toLowerCase().includes(q) ||
+        s.hostUid.toLowerCase().includes(q) ||
+        String(s.hostNumericId || '').includes(q.replace('#', ''))
+    );
+  }
+
+  const sort = typeof req.query.sort === 'string' ? req.query.sort.trim().toLowerCase() : '';
+  if (sort === 'new' || sort === 'debut') {
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  } else if (sort === 'popular') {
+    const popularScore = (s: (typeof list)[number]) =>
+      (s.viewMinutes || 0) * 20 +
+      s.viewerCount +
+      (s.totalGiftsCoins || 0) +
+      (s.followerCount || 0) * 10;
+    list.sort((a, b) => popularScore(b) - popularScore(a));
+  }
+
+  const total = list.length;
+  const hasPageParam = req.query.page !== undefined || req.query.limit !== undefined;
+  const pageSize = Math.max(1, Math.min(60, Number(req.query.limit) || 24));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.max(1, Math.min(totalPages, Number(req.query.page) || 1));
+  const paged = hasPageParam ? list.slice((page - 1) * pageSize, page * pageSize) : list;
+
+  res.json({
+    streams: paged,
+    total,
+    page,
+    pageSize,
+    totalPages,
+    roomCeiling: 1000,
+  });
 });
 
 app.post('/api/streams', (req, res) => {

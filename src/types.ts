@@ -261,6 +261,7 @@ export interface Livestream {
   viewerCount: number;
   thumbnail: string;
   isLive: boolean;
+  isFull?: boolean;
   isLocked?: boolean;
   consentVerified?: boolean;
   createdAt?: number;

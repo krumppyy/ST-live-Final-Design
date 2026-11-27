@@ -604,7 +604,10 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
             >
               {pagedFiltered.map((stream) => {
                 const filledSeats = stream.seats?.filter((s) => Boolean(s.uid)).length ?? 1;
-                const isRoomFull = stream.maxSeats > 0 && filledSeats >= stream.maxSeats;
+                const isRoomFull =
+                  Boolean(stream.isFull) ||
+                  stream.viewerCount >= 1_000_000 ||
+                  (stream.maxSeats > 0 && filledSeats >= stream.maxSeats);
                 return (
                 <article
                   key={stream.id}

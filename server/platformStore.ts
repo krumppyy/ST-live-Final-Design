@@ -607,9 +607,10 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
     title: r.title,
     category: r.category,
     language: r.language,
-    viewerCount: Number(r.viewer_count || 1),
+    viewerCount: Math.min(1_000_000, Number(r.viewer_count || 1)),
     thumbnail: r.thumbnail,
     isLive: Boolean(r.is_live),
+    isFull: Number(r.viewer_count || 0) >= 1_000_000,
     isLocked: Boolean(r.is_locked),
     consentVerified: r.consent_verified !== 0,
     createdAt: Number(r.created_at || Date.now()),
@@ -1261,7 +1262,8 @@ export function toggleFollowDb(followerUid: string, hostUid: string): { followin
     db.prepare('DELETE FROM follows WHERE follower_uid = ? AND host_uid = ?').run(followerUid, hostUid);
   } else {
     const currentCount = (db.prepare('SELECT COUNT(*) as c FROM follows WHERE host_uid = ?').get(hostUid) as { c: number }).c;
-    if (currentCount < 1000) {
+    const totalEdges = (db.prepare('SELECT COUNT(*) as c FROM follows').get() as { c: number }).c;
+    if (currentCount < 1000 && totalEdges < 100_000) {
       db.prepare('INSERT OR IGNORE INTO follows (follower_uid, host_uid, created_at) VALUES (?, ?, ?)').run(
         followerUid,
         hostUid,
@@ -1359,8 +1361,20 @@ export function recordRoomVisitDb(roomId: string, hostUid: string, visitorUid: s
 
 export function listRoomVisitorsDb(
   roomId: string,
-  requesterUid: string
-): { total: number; fullAccess: boolean; visitors: RoomVisitor[] } {
+  requesterUid: string,
+  page = 1,
+  pageSize = 24
+): {
+  total: number;
+  totalCount: number;
+  fullAccess: boolean;
+  truncatedForFree: boolean;
+  sampled: boolean;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  visitors: RoomVisitor[];
+} {
   const stream = db.prepare('SELECT host_uid FROM streams WHERE id = ?').get(roomId) as
     | { host_uid: string }
     | undefined;
@@ -1378,18 +1392,29 @@ export function listRoomVisitorsDb(
       c: number;
     }
   ).c;
-  const limit = fullAccess ? 40 : 2; // 2 free preview, full for VIP/Host/RoomAdmin (G-040)
+
+  const safeSize = fullAccess ? Math.max(1, Math.min(24, Math.floor(pageSize) || 24)) : 2;
+  const totalPages = fullAccess ? Math.max(1, Math.ceil(total / safeSize)) : 1;
+  const safePage = fullAccess ? Math.max(1, Math.min(totalPages, Math.floor(page) || 1)) : 1;
+  const offset = fullAccess ? (safePage - 1) * safeSize : 0;
+
   const rows = db
     .prepare(
       `SELECT visitor_uid, visitor_name, MAX(visited_at) as visited_at
        FROM room_visits WHERE room_id = ?
-       GROUP BY visitor_uid ORDER BY visited_at DESC LIMIT ?`
+       GROUP BY visitor_uid ORDER BY visited_at DESC LIMIT ? OFFSET ?`
     )
-    .all(roomId, limit) as Array<{ visitor_uid: string; visitor_name: string; visited_at: number }>;
+    .all(roomId, safeSize, offset) as Array<{ visitor_uid: string; visitor_name: string; visited_at: number }>;
 
   return {
     total,
+    totalCount: total,
     fullAccess,
+    truncatedForFree: !fullAccess && total > 2,
+    sampled: total >= 300,
+    page: safePage,
+    pageSize: safeSize,
+    totalPages,
     visitors: rows.map((r) => ({
       visitorUid: r.visitor_uid,
       visitorName: r.visitor_name,
