@@ -475,12 +475,12 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                   {session.role}
                 </span>
                 {isVipActive && (
-                  <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">
+                  <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
                     VIP {session.vipTier.toUpperCase()}
                   </span>
                 )}
                 {session.isPro && (
-                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-400">
+                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
                     PRO
                   </span>
                 )}
@@ -508,7 +508,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                 <Coins className="h-3.5 w-3.5" />
                 {session.coins.toLocaleString()}
               </span>
-              <span className="flex items-center gap-1 text-cyan-400 font-bold">
+              <span className="flex items-center gap-1 text-sky-700 dark:text-cyan-400 font-bold">
                 <Gem className="h-3.5 w-3.5" />
                 {session.diamonds.toLocaleString()}
               </span>
@@ -520,7 +520,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
             <button
               type="button"
               onClick={logout}
-              className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] px-3 text-xs font-medium text-[var(--fg-secondary)] hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
+              className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] px-3 text-xs font-medium text-[var(--fg-secondary)] hover:text-rose-700 dark:hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
             >
               <LogOut className="h-3.5 w-3.5" />
               <span>Sign Out</span>
@@ -676,7 +676,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
           {/* Blocklist Card */}
           <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-3">
             <h2 className="flex items-center gap-2 font-display text-base font-bold">
-              <Ban className="h-4 w-4 text-rose-400" />
+              <Ban className="h-4 w-4 text-rose-700 dark:text-rose-400" />
               <span>Room Blocklist ({blockedUsers.length}/200)</span>
             </h2>
             {blockedUsers.length === 0 ? (
@@ -815,7 +815,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                       onClick={() => handleBuyPerk(perk.id)}
                       className={`h-8 w-full rounded-lg text-xs font-semibold cursor-pointer ${
                         owned
-                          ? 'bg-emerald-500/15 text-emerald-400 cursor-default'
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 cursor-default'
                           : locked
                             ? 'bg-[var(--bg-surface)] text-[var(--fg-muted)] cursor-not-allowed'
                             : 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)]'
@@ -862,7 +862,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="flex items-center gap-2 font-display text-base font-bold">
-                  <Crown className="h-4 w-4 text-amber-400" />
+                  <Crown className="h-4 w-4 text-amber-700 dark:text-amber-400" />
                   <span>VIP Membership Plans</span>
                 </h2>
                 <p className="text-xs text-[var(--fg-secondary)]">
@@ -882,7 +882,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                   <div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-bold">{plan.label}</span>
-                      <span className="text-[10px] font-semibold text-amber-400">{plan.duration}</span>
+                      <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400">{plan.duration}</span>
                     </div>
                     <div className="mt-1 font-mono-nums text-lg font-bold text-[var(--accent-secondary)]">
                       {plan.tokens} Tokens
@@ -978,10 +978,10 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                     <span
                       className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase ${
                         p.status === 'approved'
-                          ? 'bg-emerald-500/20 text-emerald-400'
+                          ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
                           : p.status === 'denied'
-                            ? 'bg-rose-500/20 text-rose-400'
-                            : 'bg-amber-500/20 text-amber-400'
+                            ? 'bg-rose-500/20 text-rose-700 dark:text-rose-400'
+                            : 'bg-amber-500/20 text-amber-700 dark:text-amber-400'
                       }`}
                     >
                       {p.status}
@@ -1034,7 +1034,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
               <button
                 type="submit"
                 disabled={busy}
-                className="h-9 rounded-lg bg-[var(--accent-secondary)] px-4 text-xs font-bold text-black cursor-pointer"
+                className="h-9 rounded-lg bg-[var(--accent-primary)] px-4 text-xs font-bold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
               >
                 Submit for Staff Verification
               </button>
@@ -1055,7 +1055,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
               </h2>
               <span
                 className={`rounded px-2 py-0.5 text-[10px] font-bold ${
-                  session.totpEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-[var(--bg-elevated)] text-[var(--fg-muted)]'
+                  session.totpEnabled ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400' : 'bg-[var(--bg-elevated)] text-[var(--fg-muted)]'
                 }`}
               >
                 {session.totpEnabled ? 'ENABLED' : 'OFF'}
@@ -1069,7 +1069,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                 type="button"
                 disabled={busy}
                 onClick={handleDisable2fa}
-                className="h-9 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 text-xs font-semibold text-rose-400 cursor-pointer"
+                className="h-9 rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 text-xs font-semibold text-rose-700 dark:text-rose-400 cursor-pointer"
               >
                 Disable 2FA
               </button>
@@ -1410,7 +1410,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                     </div>
                   </div>
                   {staffData.threat.activeBlocks.length === 0 ? (
-                    <div className="flex items-center gap-2 text-xs text-emerald-400">
+                    <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
                       <CheckCircle2 className="h-4 w-4" />
                       <span>Zero actively blocked threat keys.</span>
                     </div>

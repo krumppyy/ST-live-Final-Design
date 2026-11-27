@@ -21,7 +21,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { ASPECT_RATIOS, CAMERA_FILTERS, type AspectRatioId, type ResolutionOption } from '../lib/cameraEngine';
 import { STUDIO_PRESETS, type ArOverlayId, type StudioPresetSpec } from '../lib/studioPresets';
-import type { GameType, Livestream } from '../types';
+import type { GameType, Livestream, LiveStageLayout } from '../types';
 
 interface StudioPresetsConsoleProps {
   onOpenLogin: () => void;
@@ -76,6 +76,7 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
   const [bncEnabled, setBncEnabled] = useState<boolean>(preset.hardware.bncEnabled);
   const [maxSeats, setMaxSeats] = useState<number>(preset.liveRoom.maxSeats);
   const [gameType, setGameType] = useState<GameType | ''>(preset.liveRoom.gameType);
+  const [stageLayout, setStageLayout] = useState<LiveStageLayout>(preset.liveRoom.stageLayout);
   const [slowModeSec, setSlowModeSec] = useState<number>(preset.liveRoom.slowModeSec);
   const [roomPin, setRoomPin] = useState<string>(
     preset.liveRoom.suggestPin ? String(Math.floor(100000 + Math.random() * 900000)) : ''
@@ -98,6 +99,7 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
     setBncEnabled(p.hardware.bncEnabled);
     setMaxSeats(p.liveRoom.maxSeats);
     setGameType(p.liveRoom.gameType);
+    setStageLayout(p.liveRoom.stageLayout);
     setSlowModeSec(p.liveRoom.slowModeSec);
     setRoomPin(p.liveRoom.suggestPin ? String(Math.floor(100000 + Math.random() * 900000)) : '');
     setPinCopied(false);
@@ -184,6 +186,7 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
           category: preset.liveRoom.category,
           maxSeats,
           gameType: gameType || undefined,
+          stageLayout: gameType ? stageLayout : 'video',
           pin: roomPin.trim() || undefined,
           consentVerified: true,
         }),
@@ -450,7 +453,7 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
                 onClick={() => setAncEnabled((v) => !v)}
                 className={`h-9 rounded-lg border px-3 text-xs font-medium text-left flex items-center justify-between cursor-pointer ${
                   ancEnabled
-                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                     : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-secondary)]'
                 }`}
               >
@@ -463,7 +466,7 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
                 onClick={() => setBncEnabled((v) => !v)}
                 className={`h-9 rounded-lg border px-3 text-xs font-medium text-left flex items-center justify-between cursor-pointer ${
                   bncEnabled
-                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-500'
+                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
                     : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-secondary)]'
                 }`}
               >
@@ -571,14 +574,23 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
                 </label>
 
                 <label className="space-y-1">
-                  <span className="text-[11px] font-medium text-[var(--fg-secondary)]">Game</span>
+                  <span className="text-[11px] font-medium text-[var(--fg-secondary)]">Live Game</span>
                   <select
                     value={gameType}
-                    onChange={(e) => setGameType(e.target.value as GameType | '')}
+                    onChange={(e) => {
+                      const nextGame = e.target.value as GameType | '';
+                      setGameType(nextGame);
+                      if (nextGame && stageLayout === 'video') {
+                        setStageLayout('game_pip');
+                      } else if (!nextGame) {
+                        setStageLayout('video');
+                      }
+                    }}
                     className="h-9 w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-xs text-[var(--fg-primary)]"
                   >
                     <option value="">None</option>
-                    <option value="fps">3D FPS</option>
+                    <option value="fps">ST Strike 3D</option>
+                    <option value="rpg">Realm RPG</option>
                     <option value="ludo">Ludo</option>
                     <option value="snakes">Snakes</option>
                   </select>
@@ -597,6 +609,38 @@ export const StudioPresetsConsole: React.FC<StudioPresetsConsoleProps> = ({
                     <option value={10}>10s</option>
                   </select>
                 </label>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[11px] font-medium text-[var(--fg-secondary)]">
+                  Live Stage Mode (Camera + Game Layout)
+                </span>
+                <div className="grid grid-cols-4 gap-1">
+                  {([
+                    ['video', 'Stream'],
+                    ['game_pip', 'Game+Cam'],
+                    ['split', '50/50'],
+                    ['game', 'Full Game'],
+                  ] as const).map(([layoutId, label]) => (
+                    <button
+                      key={layoutId}
+                      type="button"
+                      onClick={() => {
+                        setStageLayout(layoutId);
+                        if (layoutId !== 'video' && !gameType) {
+                          setGameType('fps');
+                        }
+                      }}
+                      className={`h-8 rounded-lg border text-[11px] font-semibold cursor-pointer ${
+                        stageLayout === layoutId
+                          ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                          : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <label className="flex items-start gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-2.5 text-[11px] text-[var(--fg-secondary)] cursor-pointer">

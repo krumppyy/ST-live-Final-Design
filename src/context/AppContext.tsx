@@ -177,7 +177,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
   const [studioPresetAppliedAt, setStudioPresetAppliedAt] = useState<number>(0);
-  const [studioOverlayCaption, setStudioOverlayCaption] = useState<string>('');
+  const [studioOverlayCaption, setStudioOverlayCaptionState] = useState<string>(() => {
+    try {
+      return window.localStorage.getItem('stlive_studio_caption') || '';
+    } catch {
+      return '';
+    }
+  });
+  const setStudioOverlayCaption = useCallback((text: string) => {
+    setStudioOverlayCaptionState(text);
+    try {
+      window.localStorage.setItem('stlive_studio_caption', text);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
   const [studioPresetOverrides, setStudioPresetOverrides] = useState<AppContextValue['studioPresetOverrides']>({});
 
   const [streams, setStreams] = useState<Livestream[]>([]);

@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
+  ArrowLeftRight,
   BadgeCheck,
   Ban,
   Bot,
   Camera,
   CameraOff,
   Check,
+  Columns2,
   Compass,
   Copy,
+  CornerDownRight,
   Crosshair,
   Crown,
   Dices,
@@ -18,6 +21,7 @@ import {
   Gamepad2,
   Gift,
   Heart,
+  Image as ImageIcon,
   Languages,
   Lock,
   Maximize2,
@@ -25,10 +29,12 @@ import {
   Mic,
   MicOff,
   Minimize2,
+  PictureInPicture2,
   Power,
   RotateCcw,
   Send,
   Share2,
+  Shield,
   ShieldAlert,
   Smile,
   Sparkles,
@@ -50,12 +56,14 @@ import type {
   GameRoomState,
   GameType,
   Livestream,
+  LiveStageLayout,
   MultiGuestSeat,
   PKState,
   PlayerColor,
   RoomVisitor,
 } from '../types';
 import { FpsArenaGame } from './FpsArenaGame';
+import { RpgDungeonGame } from './RpgDungeonGame';
 
 interface LiveRoomViewProps {
   stream: Livestream;
@@ -92,6 +100,33 @@ const PLAYER_DOT_BG: Record<PlayerColor, string> = {
   blue: 'bg-sky-600',
 };
 
+const STAGE_LAYOUT_OPTIONS: Array<{ id: LiveStageLayout; label: string; shortLabel: string }> = [
+  { id: 'video', label: 'Stream', shortLabel: 'Stream' },
+  { id: 'game_pip', label: 'Game + Cam', shortLabel: 'Game+Cam' },
+  { id: 'split', label: '50/50 Split', shortLabel: '50/50' },
+  { id: 'game', label: 'Full Game', shortLabel: 'Full Game' },
+];
+
+const PIP_CORNER_CLASSES: Record<'tr' | 'br' | 'tl' | 'bl', string> = {
+  tr: 'top-3 right-3',
+  br: 'bottom-3 right-3',
+  tl: 'top-3 left-3',
+  bl: 'bottom-3 left-3',
+};
+
+const PIP_CORNER_LABELS: Record<'tr' | 'br' | 'tl' | 'bl', string> = {
+  br: 'Bottom-Right',
+  bl: 'Bottom-Left',
+  tl: 'Top-Left',
+  tr: 'Top-Right',
+};
+
+function parseMediaToken(text: string): { kind: 'photo' | 'clip'; id: string } | null {
+  const m = text.trim().match(/^\[(photo|clip):([a-zA-Z0-9_-]{3,48})\]$/);
+  if (!m) return null;
+  return { kind: m[1] as 'photo' | 'clip', id: m[2] };
+}
+
 export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   stream,
   onBack,
@@ -106,6 +141,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     authFetch,
     streams,
     games,
+    mediaLibrary,
     followingHostUids,
     toggleFollowHost,
     autoTranslateChat,
@@ -140,9 +176,13 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [pkTarget, setPkTarget] = useState<'host' | 'challenger'>('host');
   const [giftCombo, setGiftCombo] = useState<number>(1);
   const [cameraActive, setCameraActive] = useState(false);
-  const [stageMode, setStageMode] = useState<'video' | 'game'>(
-    liveStream.gameRoomId ? 'game' : 'video'
+  const [stageLayout, setStageLayout] = useState<LiveStageLayout>(
+    liveStream.stageLayout || (liveStream.gameRoomId ? 'game_pip' : 'video')
   );
+  const [camCorner, setCamCorner] = useState<'tr' | 'br' | 'tl' | 'bl'>('br');
+  const [camPipSize, setCamPipSize] = useState<'sm' | 'md'>('sm');
+  const [splitSwapped, setSplitSwapped] = useState<boolean>(false);
+  const [tipCooldownUntil, setTipCooldownUntil] = useState<number>(0);
 
   // PIN Lock Gate
   const isOwnerOrStaff = Boolean(
@@ -182,18 +222,30 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     }
   }, [liveStream.isLocked, isOwnerOrStaff]);
 
-  // Countdown tick when Dice Duel is active
+  // Countdown tick when Dice Duel or Free Tip cooldown is active
   useEffect(() => {
-    if (!duel?.active) return;
+    if (!duel?.active && tipCooldownUntil <= Date.now()) return;
     const id = setInterval(() => setNowTick(Date.now()), 500);
     return () => clearInterval(id);
-  }, [duel?.active]);
+  }, [duel?.active, tipCooldownUntil]);
 
-  // Auto-open in-stream game stage when Host launches a game live
+  // Keep live camera MediaStream attached cleanly whenever stage layout switches
+  useEffect(() => {
+    if (!cameraActive || !mediaStreamRef.current) return;
+    const raf = requestAnimationFrame(() => {
+      if (videoRef.current && videoRef.current.srcObject !== mediaStreamRef.current) {
+        videoRef.current.srcObject = mediaStreamRef.current;
+        videoRef.current.play().catch(() => {});
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [cameraActive, stageLayout, camCorner, camPipSize, splitSwapped]);
+
+  // Auto-open Game + Cam PiP stage when Host launches a game live
   const prevGameIdRef = useRef<string | undefined>(liveStream.gameRoomId);
   useEffect(() => {
     if (liveStream.gameRoomId && liveStream.gameRoomId !== prevGameIdRef.current) {
-      setStageMode('game');
+      setStageLayout((curr) => (curr === 'video' ? 'game_pip' : curr));
     }
     prevGameIdRef.current = liveStream.gameRoomId;
   }, [liveStream.gameRoomId]);
@@ -250,6 +302,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     session &&
       activeRoomGame &&
       activeRoomGame.gameType !== 'fps' &&
+      activeRoomGame.gameType !== 'rpg' &&
       activeRoomGame.status === 'playing' &&
       currentTurnPlayer?.uid === session.uid
   );
@@ -307,6 +360,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           mutedUids: string[];
           followers?: string[];
           slowModeSec?: number;
+          stageLayout?: LiveStageLayout;
           coHosts?: Array<{ uid: string; displayName: string; status: 'invited' | 'live'; joinedAt: number }>;
         };
         if (data.roomId === liveStream.id) {
@@ -316,6 +370,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           setMessages(data.messages);
           setMutedUids(data.mutedUids || []);
           if (typeof data.slowModeSec === 'number') setSlowModeSec(data.slowModeSec);
+          if (data.stageLayout) setStageLayout(data.stageLayout);
           if (Array.isArray(data.coHosts)) setCoHosts(data.coHosts);
           if (data.followers) setFollowersCount(Math.max(data.followers.length, liveStream.followerCount ?? 0));
         }
@@ -431,17 +486,45 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     }
   };
 
-  const handleLaunchInStreamGame = (gameType: GameType) => {
+  const handleLaunchInStreamGame = (gameType: GameType, targetLayout?: LiveStageLayout) => {
     if (!session) {
       onRequireLogin();
       return;
     }
+    const nextLayout: LiveStageLayout = targetLayout || (stageLayout === 'video' ? 'game_pip' : stageLayout);
     sendWsEvent('room:launch_game', { roomId: liveStream.id, gameType });
-    setStageMode('game');
-    pushToast(
-      `Launching ${gameType === 'fps' ? '3D FPS Arena' : gameType === 'ludo' ? 'Ludo' : 'Snakes & Ladders'} live!`,
-      'success'
-    );
+    setStageLayout(nextLayout);
+    if (isHostOrMod) {
+      sendWsEvent('room:stage_layout', { roomId: liveStream.id, stageLayout: nextLayout });
+    }
+    const labelMap: Record<GameType, string> = {
+      fps: 'ST Strike 3D',
+      rpg: 'Realm Quest Co-Op RPG',
+      ludo: 'Ludo Arena',
+      snakes: 'Snakes & Ladders',
+    };
+    pushToast(`Launching ${labelMap[gameType]} live!`, 'success');
+  };
+
+  const handleSelectStageLayout = (nextLayout: LiveStageLayout) => {
+    if (nextLayout !== 'video' && !activeRoomGame) {
+      if (canLaunchGame) {
+        handleLaunchInStreamGame('fps', nextLayout);
+        return;
+      }
+      pushToast('No live game is active in this room yet.', 'info');
+      return;
+    }
+    setStageLayout(nextLayout);
+    if (isHostOrMod) {
+      sendWsEvent('room:stage_layout', { roomId: liveStream.id, stageLayout: nextLayout });
+    }
+  };
+
+  const cycleCamCorner = () => {
+    const order: Array<'br' | 'bl' | 'tl' | 'tr'> = ['br', 'bl', 'tl', 'tr'];
+    const next = order[(order.indexOf(camCorner) + 1) % order.length];
+    setCamCorner(next);
   };
 
   const handleRequestJoinGame = () => {
@@ -628,7 +711,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                 placeholder="6-digit PIN (Test: 123456)"
                 className="w-full h-11 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-center font-mono-nums text-base tracking-[0.35em] text-[var(--fg-primary)]"
               />
-              {pinError && <div className="text-xs text-rose-400">{pinError}</div>}
+              {pinError && <div className="text-xs text-rose-700 dark:text-rose-400">{pinError}</div>}
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -701,54 +784,39 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
               title="1-on-1 Encrypted Message"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-emerald-500/60 cursor-pointer"
             >
-              <MessageCircle className="h-3.5 w-3.5 text-emerald-400" />
+              <MessageCircle className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
               <span className="hidden sm:inline">DM</span>
             </button>
           )}
 
-          {liveStream.hostMonetagTipUrl && (
-            <a
-              href={liveStream.hostMonetagTipUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/12 px-2.5 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/20"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              <span>Free Tip</span>
-            </a>
-          )}
+          {liveStream.hostMonetagTipUrl && session?.uid !== liveStream.hostUid && (() => {
+            const tipSecLeft = Math.max(0, Math.ceil((tipCooldownUntil - nowTick) / 1000));
+            return tipSecLeft > 0 ? (
+              <span className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/12 px-2.5 text-xs font-mono-nums font-semibold text-emerald-700 dark:text-emerald-400">
+                <Check className="h-3.5 w-3.5" />
+                <span>Tipped ({tipSecLeft}s)</span>
+              </span>
+            ) : (
+              <a
+                href={liveStream.hostMonetagTipUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  setTipCooldownUntil(Date.now() + 30_000);
+                  setNowTick(Date.now());
+                  pushToast(`Thanks for supporting ${liveStream.hostName} with a Free Tip!`, 'success');
+                }}
+                className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/12 px-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                <span>Free Tip</span>
+              </a>
+            );
+          })()}
         </div>
 
         {/* Right Action Cluster (Compact Popover Triggers) */}
         <div className="flex flex-wrap items-center gap-1.5 relative">
-          {activeRoomGame && (
-            <div className="flex items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-0.5">
-              <button
-                type="button"
-                onClick={() => setStageMode('video')}
-                className={`inline-flex h-8 items-center gap-1 rounded-md px-2.5 text-xs font-semibold cursor-pointer ${
-                  stageMode === 'video'
-                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                    : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
-                }`}
-              >
-                <Video className="h-3.5 w-3.5" />
-                <span>Stream</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setStageMode('game')}
-                className={`inline-flex h-8 items-center gap-1 rounded-md px-2.5 text-xs font-semibold cursor-pointer ${
-                  stageMode === 'game'
-                    ? 'bg-[var(--accent-secondary)] text-[#0d0d10]'
-                    : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
-                }`}
-              >
-                <Gamepad2 className="h-3.5 w-3.5" />
-                <span>Live Game</span>
-              </button>
-            </div>
-          )}
 
           <button
             type="button"
@@ -798,7 +866,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             type="button"
             onClick={() => setActivePopover((p) => (p === 'report' ? 'none' : 'report'))}
             title="Report Safety Issue"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-secondary)] hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-secondary)] hover:text-rose-700 dark:hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
           >
             <Flag className="h-3.5 w-3.5" />
           </button>
@@ -815,7 +883,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
               title="Toggle Chat Slow Mode"
               className={`inline-flex h-9 items-center gap-1 rounded-lg border px-2.5 text-xs font-medium cursor-pointer ${
                 slowModeSec > 0
-                  ? 'border-amber-400/60 bg-amber-500/15 text-amber-300'
+                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-700 dark:text-amber-300'
                   : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)]'
               }`}
             >
@@ -856,7 +924,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   type="button"
                   onClick={handleEndBroadcast}
                   title="End Broadcast"
-                  className="inline-flex h-9 items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 text-xs font-semibold text-rose-400 hover:bg-rose-500/25 cursor-pointer"
+                  className="inline-flex h-9 items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/15 px-2.5 text-xs font-semibold text-rose-700 dark:text-rose-400 hover:bg-rose-500/25 cursor-pointer"
                 >
                   <Power className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">End</span>
@@ -941,7 +1009,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                     </div>
                   ))}
                   {visitorsData.truncatedForFree && (
-                    <div className="rounded-lg bg-amber-500/12 border border-amber-500/30 p-2 text-[10px] text-amber-300">
+                    <div className="rounded-lg bg-amber-500/12 border border-amber-500/30 p-2 text-[10px] text-amber-700 dark:text-amber-300">
                       Showing 2 free previews. Activate VIP in Me Hub to see full visitor history.
                     </div>
                   )}
@@ -1021,7 +1089,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
               ) : (
                 <div className="space-y-2 text-xs">
                   {duel?.winnerName && (
-                    <div className="rounded-lg bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-400">
+                    <div className="rounded-lg bg-emerald-500/15 px-2.5 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-400">
                       Last Winner: <strong>{duel.winnerName}</strong>
                     </div>
                   )}
@@ -1045,371 +1113,572 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
         </div>
       </div>
 
-      {/* Host Inline "Play With Followers & Viewers" Game Launcher */}
-      {canLaunchGame && (
-        <section className="mb-4 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-4 py-2.5">
-          <div className="flex items-center gap-2 text-xs text-[var(--fg-secondary)]">
-            <Gamepad2 className="h-4 w-4 text-[var(--accent-secondary)]" />
-            <span className="font-semibold text-[var(--fg-primary)]">Host Live Game Controls:</span>
-            <span className="hidden sm:inline">Launch a multiplayer match inside this stream</span>
-          </div>
+      {/* Unified Live Stage Layout & In-Stream Game Bar (Zero Overlap) */}
+      {(canLaunchGame || activeRoomGame) && (
+        <section className="mb-4 flex flex-wrap items-center justify-between gap-2.5 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 py-2.5">
+          {/* 4 Switchable Stage Modes */}
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => handleLaunchInStreamGame('fps')}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
-            >
-              <Crosshair className="h-3.5 w-3.5" />
-              <span>3D FPS</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleLaunchInStreamGame('ludo')}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
-            >
-              <Dices className="h-3.5 w-3.5" />
-              <span>Ludo</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleLaunchInStreamGame('snakes')}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
-            >
-              <Gamepad2 className="h-3.5 w-3.5" />
-              <span>Snakes</span>
-            </button>
+            <div className="inline-flex items-center rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-0.5">
+              {STAGE_LAYOUT_OPTIONS.map((opt) => {
+                const effectiveLayout = activeRoomGame ? stageLayout : 'video';
+                const isSelected = effectiveLayout === opt.id;
+                const Icon =
+                  opt.id === 'video'
+                    ? Video
+                    : opt.id === 'game_pip'
+                      ? PictureInPicture2
+                      : opt.id === 'split'
+                        ? Columns2
+                        : Gamepad2;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => handleSelectStageLayout(opt.id)}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                        : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">{opt.label}</span>
+                    <span className="sm:hidden">{opt.shortLabel}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeRoomGame && stageLayout === 'game_pip' && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={cycleCamCorner}
+                  title={`Camera corner: ${PIP_CORNER_LABELS[camCorner]}`}
+                  className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-[11px] font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+                >
+                  <CornerDownRight className="h-3 w-3 text-[var(--accent-secondary)]" />
+                  <span>Corner</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCamPipSize((s) => (s === 'sm' ? 'md' : 'sm'))}
+                  title="Toggle PiP Camera Size"
+                  className="inline-flex h-8 items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 font-mono-nums text-[11px] font-semibold text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] cursor-pointer"
+                >
+                  {camPipSize === 'sm' ? 'Cam S' : 'Cam M'}
+                </button>
+              </div>
+            )}
+
+            {activeRoomGame && stageLayout === 'split' && (
+              <button
+                type="button"
+                onClick={() => setSplitSwapped((v) => !v)}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-[11px] font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+              >
+                <ArrowLeftRight className="h-3 w-3 text-[var(--accent-secondary)]" />
+                <span>Swap Sides</span>
+              </button>
+            )}
           </div>
+
+          {/* Host Inline 4-Game Launcher */}
+          {canLaunchGame && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {([
+                { id: 'fps' as GameType, label: 'ST Strike', icon: Crosshair },
+                { id: 'rpg' as GameType, label: 'Realm RPG', icon: Shield },
+                { id: 'ludo' as GameType, label: 'Ludo', icon: Dices },
+                { id: 'snakes' as GameType, label: 'Snakes', icon: Gamepad2 },
+              ]).map((gm) => {
+                const Icon = gm.icon;
+                const active = activeRoomGame?.gameType === gm.id;
+                return (
+                  <button
+                    key={gm.id}
+                    type="button"
+                    onClick={() => handleLaunchInStreamGame(gm.id)}
+                    className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs font-semibold cursor-pointer ${
+                      active
+                        ? 'border-[var(--accent-secondary)] bg-[var(--accent-secondary)]/15 text-[var(--accent-secondary)]'
+                        : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-primary)] hover:border-[var(--accent-primary)]'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    <span>{gm.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </section>
       )}
 
       <div className="flex flex-col lg:flex-row gap-5 xl:gap-6 items-start">
         {/* Main Stage */}
         <div className="w-full min-w-0 flex-1 space-y-5">
-          {stageMode === 'game' && activeRoomGame ? (
-            <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border-hairline)] pb-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="relative h-12 w-20 shrink-0 overflow-hidden rounded-lg border border-[var(--border-hairline)] bg-black">
-                    {cameraActive ? (
-                      <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
-                    ) : (
-                      <img src={liveStream.thumbnail} alt={liveStream.title} className="h-full w-full object-cover" />
-                    )}
-                    <span className="absolute left-1 top-1 rounded bg-[#D90429] px-1 text-[9px] font-bold text-white">
-                      LIVE
-                    </span>
-                  </div>
-                  <div className="min-w-0">
-                    <h1 className="font-display text-sm sm:text-base font-bold text-[var(--fg-primary)] truncate">
-                      {activeRoomGame.title}
-                    </h1>
-                    <p className="text-xs text-[var(--fg-secondary)] truncate">
-                      Host: <strong className="text-[var(--fg-primary)]">{activeRoomGame.hostName}</strong> ·{' '}
-                      {activeRoomGame.players.length}/{activeRoomGame.maxPlayers || 4} playing
-                    </p>
-                  </div>
-                </div>
+          {(() => {
+            const effectiveLayout: LiveStageLayout = activeRoomGame ? stageLayout : 'video';
 
-                <div className="flex flex-wrap items-center gap-2">
-                  {!isSeatedInGame && !isPendingInGame && (
-                    <button
-                      type="button"
-                      onClick={handleRequestJoinGame}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
-                    >
-                      <UserPlus className="h-3.5 w-3.5" />
-                      <span>{t('requestJoin')}</span>
-                    </button>
-                  )}
-                  {isPendingInGame && (
-                    <span className="inline-flex h-9 items-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 text-xs font-medium text-amber-500">
-                      {t('requestPending')}
-                    </span>
-                  )}
-                  {canApproveRoomGame && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => sendWsEvent('game:add_bot', { roomId: activeRoomGame.roomId })}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
-                      >
-                        <Bot className="h-3.5 w-3.5" />
-                        <span>{activeRoomGame.gameType === 'fps' ? 'Add Drone' : 'Add Bot'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => sendWsEvent('game:restart', { roomId: activeRoomGame.roomId })}
-                        className="inline-flex h-9 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5" />
-                        <span>Reset</span>
-                      </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onOpenGame(activeRoomGame.roomId)}
-                    title="Open Full Games Hub"
-                    className="inline-flex h-9 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2.5 text-xs font-medium text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] cursor-pointer"
-                  >
-                    <Maximize2 className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Full Hub</span>
-                  </button>
-                </div>
-              </div>
+            const renderVideoStage = (mode: 'full' | 'split' | 'pip') => (
+              <div
+                className={`relative overflow-hidden border border-[var(--border-hairline)] bg-black ${
+                  mode === 'full'
+                    ? 'mx-auto aspect-video w-full max-w-[calc(74dvh*16/9)] rounded-2xl'
+                    : mode === 'split'
+                      ? 'aspect-video xl:aspect-auto xl:min-h-[430px] h-full w-full rounded-2xl'
+                      : `${
+                          camPipSize === 'sm' ? 'w-36 sm:w-44' : 'w-48 sm:w-60'
+                        } aspect-video rounded-xl border-white/25 shadow-2xl`
+                }`}
+              >
+                {cameraActive ? (
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{ transform: gimbal.getCssTransform(), transition: 'transform 70ms linear' }}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <img
+                    src={liveStream.thumbnail}
+                    alt={liveStream.title}
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-cover"
+                  />
+                )}
 
-              {activeRoomGame.gameType === 'fps' ? (
-                <FpsArenaGame
-                  game={activeRoomGame}
-                  compact
-                  isSeated={isSeatedInGame}
-                  isPending={isPendingInGame}
-                  onRequestJoin={handleRequestJoinGame}
-                />
-              ) : (
-                <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-4 space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--accent-secondary)]">
-                        {activeRoomGame.gameType === 'ludo' ? 'Live In-Stream Ludo' : 'Live In-Stream Snakes & Ladders'}
+                {/* Celebratory Nova Burst / Crowd Confetti / Pulse Overlay */}
+                {novaFlash && mode !== 'pip' && (
+                  <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-gradient-to-tr from-[#D90429]/30 via-amber-400/20 to-[#A3E635]/30 motion-safe:animate-nova-burst">
+                    {novaFlash.fxKind !== 'pulse' && (
+                      <div className="absolute inset-0 overflow-hidden">
+                        {Array.from({ length: 16 }).map((_, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              left: `${(idx * 6.5 + 4) % 94}%`,
+                              top: `${(idx * 17 + 8) % 80}%`,
+                              backgroundColor: ['#D90429', '#A3E635', '#E8C86A', '#38bdf8'][idx % 4],
+                            }}
+                            className="absolute h-2 w-3 rounded-xs opacity-85 motion-safe:animate-bounce"
+                          />
+                        ))}
                       </div>
-                      <p className="text-xs text-[var(--fg-secondary)] mt-0.5">
-                        {activeRoomGame.winnerName ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-500 font-semibold">
-                            <Crown className="h-3.5 w-3.5" /> {activeRoomGame.winnerName} won!
-                          </span>
-                        ) : activeRoomGame.status === 'lobby' ? (
-                          'Waiting for Host to approve a Follower/viewer or add a Bot.'
-                        ) : currentTurnPlayer ? (
-                          `Active Turn: ${currentTurnPlayer.displayName} (${currentTurnPlayer.color})`
-                        ) : null}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {activeRoomGame.diceValue !== null && (
-                        <span className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-1.5 font-mono-nums text-xs font-bold text-[var(--fg-primary)]">
-                          Roll: {activeRoomGame.diceValue}
+                    )}
+                    <div className="relative rounded-2xl border border-amber-300/60 bg-black/82 px-5 py-3 text-center text-white shadow-2xl backdrop-blur-md">
+                      <div className="flex items-center justify-center gap-2 text-amber-300 font-bold text-[11px] uppercase tracking-widest">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>
+                          {novaFlash.fxKind === 'nova'
+                            ? 'NOVA STAGE BURST'
+                            : novaFlash.fxKind === 'confetti'
+                              ? 'CROWD CONFETTI FX'
+                              : 'STAGE PULSE HYPE'}
                         </span>
-                      )}
+                        <Sparkles className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="mt-1 font-display text-base font-extrabold">
+                        {novaFlash.sender} sent {novaFlash.gift}!
+                      </div>
+                      <div className="font-mono-nums text-xs text-lime-300">
+                        {novaFlash.coins.toLocaleString()} Coins Crowd Cut
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {mode === 'pip' ? (
+                  <>
+                    <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                      <span className="h-1.5 w-1.5 rounded-full bg-[#D90429]" />
+                      <span>LIVE</span>
+                      <span className="font-mono-nums opacity-80">{liveStream.viewerCount}</span>
+                    </div>
+                    <div className="absolute right-1.5 top-1.5 flex items-center gap-1">
                       <button
                         type="button"
-                        disabled={!isMyBoardTurn || activeRoomGame.mustMove}
-                        onClick={() => {
-                          playDiceSfx();
-                          sendWsEvent('game:roll_dice', { roomId: activeRoomGame.roomId });
-                        }}
-                        className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--accent-contrast)] disabled:opacity-40 cursor-pointer"
+                        onClick={cycleCamCorner}
+                        title="Move Camera Corner"
+                        className="flex h-6 w-6 items-center justify-center rounded bg-black/75 text-white hover:bg-black cursor-pointer"
                       >
-                        <Dices className="h-4 w-4" />
-                        <span>{t('rollDice')}</span>
+                        <CornerDownRight className="h-3 w-3" />
                       </button>
-                      {activeRoomGame.gameType === 'ludo' && isMyBoardTurn && activeRoomGame.mustMove && (
+                      <button
+                        type="button"
+                        onClick={() => handleSelectStageLayout('video')}
+                        title="Expand Stream Fullscreen"
+                        className="flex h-6 w-6 items-center justify-center rounded bg-black/75 text-white hover:bg-black cursor-pointer"
+                      >
+                        <Maximize2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 py-1 text-[10px] font-semibold text-white truncate">
+                      {countryFlag(liveStream.countryCode)} {liveStream.hostName}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+                    <div className="absolute inset-x-4 bottom-3.5 flex items-end justify-between gap-3 text-white">
+                      <div className="min-w-0">
+                        <h1 className="font-display text-base sm:text-lg font-bold truncate">
+                          {liveStream.title}
+                        </h1>
+                        <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/85 font-mono-nums">
+                          <span>{countryFlag(liveStream.countryCode)}</span>
+                          <span>{liveStream.hostName}</span>
+                          {liveStream.hostVerified && <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />}
+                          {liveStream.hostNumericId && <span className="opacity-70">#{liveStream.hostNumericId}</span>}
+                          <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
+                          {liveStream.consentVerified && (
+                            <span className="rounded bg-emerald-500/25 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                              CONSENTED
+                            </span>
+                          )}
+                          {slowModeSec > 0 && (
+                            <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                              SLOW {slowModeSec}s
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <span className="block font-mono-nums text-xs font-bold tracking-wide text-rose-400">
+                          ON AIR
+                        </span>
+                        <span className="text-[10px] font-mono-nums text-white/65">
+                          {rtcTurnReady ? 'RTC TURN' : 'RTC STUN'}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+
+            const renderGameStage = (showCornerPip: boolean, showMiniHostBar: boolean) => {
+              if (!activeRoomGame) return null;
+              const levelPrefix = activeRoomGame.gameType === 'rpg' ? 'F' : 'L';
+              const maxLvl = activeRoomGame.maxLevel || 3;
+              const curLvl = activeRoomGame.level || 1;
+              return (
+                <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-3.5 sm:p-4 space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-[var(--border-hairline)] pb-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {showMiniHostBar && (
+                        <div className="relative h-11 w-18 shrink-0 overflow-hidden rounded-lg border border-[var(--border-hairline)] bg-black">
+                          {cameraActive ? (
+                            <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                          ) : (
+                            <img src={liveStream.thumbnail} alt={liveStream.title} className="h-full w-full object-cover" />
+                          )}
+                          <span className="absolute left-1 top-1 rounded bg-[#D90429] px-1 text-[8px] font-bold text-white">
+                            LIVE
+                          </span>
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <h1 className="font-display text-sm sm:text-base font-bold text-[var(--fg-primary)] truncate">
+                            {activeRoomGame.title}
+                          </h1>
+                          <span className="rounded bg-[var(--accent-primary)]/15 px-1.5 py-0.5 font-mono-nums text-[10px] font-bold text-[var(--accent-primary)]">
+                            {levelPrefix}{curLvl}/{maxLvl} · {activeRoomGame.difficultyLabel || 'Standard'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-[var(--fg-secondary)] truncate">
+                          {activeRoomGame.levelTitle || activeRoomGame.hostName} ·{' '}
+                          {activeRoomGame.players.length}/{activeRoomGame.maxPlayers || 4} playing
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {canApproveRoomGame && maxLvl > 1 && (
+                        <div className="inline-flex items-center rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-0.5">
+                          {Array.from({ length: maxLvl }, (_, i) => i + 1).map((lvl) => (
+                            <button
+                              key={lvl}
+                              type="button"
+                              onClick={() =>
+                                sendWsEvent('game:set_level', { roomId: activeRoomGame.roomId, level: lvl })
+                              }
+                              className={`h-7 min-w-[26px] rounded px-1.5 font-mono-nums text-[10px] font-bold cursor-pointer ${
+                                curLvl === lvl
+                                  ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                                  : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                              }`}
+                            >
+                              {levelPrefix}{lvl}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {!isSeatedInGame && !isPendingInGame && (
                         <button
                           type="button"
-                          onClick={() => {
-                            const me = activeRoomGame.players.find((p) => p.uid === session?.uid);
-                            const dice = activeRoomGame.diceValue || 1;
-                            const legalIdx = me?.tokens.findIndex(
-                              (pos) => (pos === -1 && dice === 6) || (pos >= 0 && pos < 56 && pos + dice <= 56)
-                            );
-                            if (legalIdx !== undefined && legalIdx >= 0) {
-                              playStepSfx();
-                              sendWsEvent('game:move_piece', {
-                                roomId: activeRoomGame.roomId,
-                                tokenIndex: legalIdx,
-                              });
-                            }
-                          }}
-                          className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[var(--accent-secondary)] px-3.5 text-xs font-bold text-[#0d0d10] cursor-pointer"
+                          onClick={handleRequestJoinGame}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-2.5 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
                         >
-                          Move Token
+                          <UserPlus className="h-3.5 w-3.5" />
+                          <span>{t('requestJoin')}</span>
                         </button>
                       )}
+                      {isPendingInGame && (
+                        <span className="inline-flex h-8 items-center rounded-lg border border-amber-500/40 bg-amber-500/12 px-2.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+                          {t('requestPending')}
+                        </span>
+                      )}
+                      {canApproveRoomGame && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => sendWsEvent('game:add_bot', { roomId: activeRoomGame.roomId })}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-xs font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+                          >
+                            <Bot className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">
+                              {activeRoomGame.gameType === 'fps'
+                                ? 'Drone'
+                                : activeRoomGame.gameType === 'rpg'
+                                  ? 'Ally Bot'
+                                  : 'Add Bot'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => sendWsEvent('game:restart', { roomId: activeRoomGame.roomId })}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-xs font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">Reset</span>
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onOpenGame(activeRoomGame.roomId)}
+                        title="Open Full Games Hub"
+                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-2 text-xs font-medium text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] cursor-pointer"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Hub</span>
+                      </button>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {activeRoomGame.players.map((p, idx) => (
-                      <div
-                        key={p.uid}
-                        className={`rounded-xl border p-3 ${
-                          activeRoomGame.status === 'playing' && activeRoomGame.turnIndex === idx
-                            ? 'border-[var(--accent-primary)] bg-[var(--bg-surface)]'
-                            : 'border-[var(--border-hairline)] bg-[var(--bg-surface)]/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2.5 w-2.5 rounded-full ${PLAYER_DOT_BG[p.color]}`} />
-                          <span className="truncate text-xs font-semibold text-[var(--fg-primary)]">
-                            {p.displayName}
-                          </span>
+                  {/* Interactive Game Arena Container (with optional Floating Streamer Camera PiP in corner) */}
+                  <div className="relative">
+                    {activeRoomGame.gameType === 'fps' ? (
+                      <FpsArenaGame
+                        game={activeRoomGame}
+                        compact
+                        isSeated={isSeatedInGame}
+                        isPending={isPendingInGame}
+                        onRequestJoin={handleRequestJoinGame}
+                      />
+                    ) : activeRoomGame.gameType === 'rpg' ? (
+                      <RpgDungeonGame
+                        game={activeRoomGame}
+                        compact
+                        isSeated={isSeatedInGame}
+                        isPending={isPendingInGame}
+                        onRequestJoin={handleRequestJoinGame}
+                      />
+                    ) : (
+                      <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-4 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--accent-secondary)]">
+                              {activeRoomGame.gameType === 'ludo'
+                                ? `Live In-Stream Ludo · L${curLvl}`
+                                : `Live In-Stream Snakes & Ladders · L${curLvl}`}
+                            </div>
+                            <p className="text-xs text-[var(--fg-secondary)] mt-0.5">
+                              {activeRoomGame.winnerName ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400 font-semibold">
+                                  <Crown className="h-3.5 w-3.5" /> {activeRoomGame.winnerName} won!
+                                </span>
+                              ) : activeRoomGame.status === 'lobby' ? (
+                                'Waiting for Host to approve a Follower/viewer or add a Bot.'
+                              ) : currentTurnPlayer ? (
+                                `Active Turn: ${currentTurnPlayer.displayName} (${currentTurnPlayer.color})`
+                              ) : null}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {activeRoomGame.diceValue !== null && (
+                              <span className="rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 py-1.5 font-mono-nums text-xs font-bold text-[var(--fg-primary)]">
+                                Roll: {activeRoomGame.diceValue}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              disabled={!isMyBoardTurn || activeRoomGame.mustMove}
+                              onClick={() => {
+                                playDiceSfx();
+                                sendWsEvent('game:roll_dice', { roomId: activeRoomGame.roomId });
+                              }}
+                              className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--accent-contrast)] disabled:opacity-40 cursor-pointer"
+                            >
+                              <Dices className="h-4 w-4" />
+                              <span>{t('rollDice')}</span>
+                            </button>
+                            {activeRoomGame.gameType === 'ludo' && isMyBoardTurn && activeRoomGame.mustMove && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const me = activeRoomGame.players.find((p) => p.uid === session?.uid);
+                                  const dice = activeRoomGame.diceValue || 1;
+                                  const canDeploy = dice === 6 || (curLvl === 2 && dice === 5);
+                                  const legalIdx = me?.tokens.findIndex(
+                                    (pos) => (pos === -1 && canDeploy) || (pos >= 0 && pos < 56 && pos + dice <= 56)
+                                  );
+                                  if (legalIdx !== undefined && legalIdx >= 0) {
+                                    playStepSfx();
+                                    sendWsEvent('game:move_piece', {
+                                      roomId: activeRoomGame.roomId,
+                                      tokenIndex: legalIdx,
+                                    });
+                                  }
+                                }}
+                                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3.5 text-xs font-bold text-[var(--accent-contrast)] cursor-pointer"
+                              >
+                                Move Token
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-1 font-mono-nums text-[11px] text-[var(--fg-muted)]">
-                          {activeRoomGame.gameType === 'ludo'
-                            ? `Home ${p.tokens.filter((v) => v === 56).length}/4`
-                            : `Square ${p.tokens[0]}/100`}
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                          {activeRoomGame.players.map((p, idx) => (
+                            <div
+                              key={p.uid}
+                              className={`rounded-xl border p-3 ${
+                                activeRoomGame.status === 'playing' && activeRoomGame.turnIndex === idx
+                                  ? 'border-[var(--accent-primary)] bg-[var(--bg-surface)]'
+                                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)]/50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`h-2.5 w-2.5 rounded-full ${PLAYER_DOT_BG[p.color]}`} />
+                                <span className="truncate text-xs font-semibold text-[var(--fg-primary)]">
+                                  {p.displayName}
+                                </span>
+                              </div>
+                              <div className="mt-1 font-mono-nums text-[11px] text-[var(--fg-muted)]">
+                                {activeRoomGame.gameType === 'ludo'
+                                  ? `Home ${p.tokens.filter((v) => v === 56).length}/4`
+                                  : `Square ${p.tokens[0]}/100`}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    )}
 
-              {(activeRoomGame.pendingRequests.length > 0 || canApproveRoomGame) && (
-                <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3 space-y-2">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-[var(--fg-primary)]">
-                      Join Requests ({activeRoomGame.pendingRequests.length})
-                    </span>
+                    {/* Floating Corner Streamer Camera Overlay (Game + Cam Mode) */}
+                    {showCornerPip && (
+                      <div className={`absolute z-20 ${PIP_CORNER_CLASSES[camCorner]}`}>
+                        {renderVideoStage('pip')}
+                      </div>
+                    )}
                   </div>
-                  {activeRoomGame.pendingRequests.length === 0 ? (
-                    <p className="text-xs text-[var(--fg-muted)]">
-                      Waiting for Followers or viewers to click &ldquo;{t('requestJoin')}&rdquo;.
-                    </p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {activeRoomGame.pendingRequests.map((req) => (
-                        <div
-                          key={req.uid}
-                          className="flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 py-1.5 text-xs"
-                        >
-                          <span className="font-semibold">{req.displayName}</span>
-                          {req.isFollower && (
-                            <span className="text-[10px] font-bold text-[var(--accent-secondary)]">FOLLOWER</span>
-                          )}
-                          {canApproveRoomGame && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  sendWsEvent('game:approve_player', {
-                                    roomId: activeRoomGame.roomId,
-                                    targetUid: req.uid,
-                                  })
-                                }
-                                className="inline-flex h-7 items-center gap-1 rounded bg-emerald-600 px-2 text-[11px] font-semibold text-white cursor-pointer"
-                              >
-                                <Check className="h-3 w-3" />
-                                <span>{t('approve')}</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  sendWsEvent('game:decline_player', {
-                                    roomId: activeRoomGame.roomId,
-                                    targetUid: req.uid,
-                                  })
-                                }
-                                aria-label="Decline"
-                                className="flex h-7 w-7 items-center justify-center rounded border border-[var(--border-hairline)] text-[var(--fg-muted)] hover:text-rose-500 cursor-pointer"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </>
-                          )}
+
+                  {(activeRoomGame.pendingRequests.length > 0 || canApproveRoomGame) && (
+                    <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-[var(--fg-primary)]">
+                          Join Requests ({activeRoomGame.pendingRequests.length})
+                        </span>
+                      </div>
+                      {activeRoomGame.pendingRequests.length === 0 ? (
+                        <p className="text-xs text-[var(--fg-muted)]">
+                          Waiting for Followers or viewers to click &ldquo;{t('requestJoin')}&rdquo;.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {activeRoomGame.pendingRequests.map((req) => (
+                            <div
+                              key={req.uid}
+                              className="flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 py-1.5 text-xs"
+                            >
+                              <span className="font-semibold">{req.displayName}</span>
+                              {req.isFollower && (
+                                <span className="text-[10px] font-bold text-[var(--accent-secondary)]">FOLLOWER</span>
+                              )}
+                              {canApproveRoomGame && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      sendWsEvent('game:approve_player', {
+                                        roomId: activeRoomGame.roomId,
+                                        targetUid: req.uid,
+                                      })
+                                    }
+                                    className="inline-flex h-7 items-center gap-1 rounded bg-emerald-600 px-2 text-[11px] font-semibold text-white cursor-pointer"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                    <span>{t('approve')}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      sendWsEvent('game:decline_player', {
+                                        roomId: activeRoomGame.roomId,
+                                        targetUid: req.uid,
+                                      })
+                                    }
+                                    aria-label="Decline"
+                                    className="flex h-7 w-7 items-center justify-center rounded border border-[var(--border-hairline)] text-[var(--fg-muted)] hover:text-rose-500 cursor-pointer"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
-                </div>
-              )}
-            </section>
-          ) : (
-            /* Standard Live Video Broadcast Stage */
-            <div className="relative mx-auto aspect-video w-full max-w-[calc(74dvh*16/9)] overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-black">
-              {cameraActive ? (
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  style={{ transform: gimbal.getCssTransform(), transition: 'transform 70ms linear' }}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <img
-                  src={liveStream.thumbnail}
-                  alt={liveStream.title}
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-cover"
-                />
-              )}
+                </section>
+              );
+            };
 
-              {/* Celebratory Nova Burst / Crowd Confetti / Pulse Overlay (G-013) */}
-              {novaFlash && (
-                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-gradient-to-tr from-[#D90429]/30 via-amber-400/20 to-[#A3E635]/30 motion-safe:animate-nova-burst">
-                  {novaFlash.fxKind !== 'pulse' && (
-                    <div className="absolute inset-0 overflow-hidden">
-                      {Array.from({ length: 16 }).map((_, idx) => (
-                        <span
-                          key={idx}
-                          style={{
-                            left: `${(idx * 6.5 + 4) % 94}%`,
-                            top: `${(idx * 17 + 8) % 80}%`,
-                            backgroundColor: ['#D90429', '#A3E635', '#E8C86A', '#38bdf8'][idx % 4],
-                          }}
-                          className="absolute h-2 w-3 rounded-xs opacity-85 motion-safe:animate-bounce"
-                        />
-                      ))}
-                    </div>
+            if (effectiveLayout === 'video') {
+              return renderVideoStage('full');
+            }
+            if (effectiveLayout === 'game_pip') {
+              return renderGameStage(true, false);
+            }
+            if (effectiveLayout === 'split') {
+              const videoHalf = <div className="min-w-0">{renderVideoStage('split')}</div>;
+              const gameHalf = <div className="min-w-0">{renderGameStage(false, false)}</div>;
+              return (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
+                  {splitSwapped ? (
+                    <>
+                      {gameHalf}
+                      {videoHalf}
+                    </>
+                  ) : (
+                    <>
+                      {videoHalf}
+                      {gameHalf}
+                    </>
                   )}
-                  <div className="relative rounded-2xl border border-amber-300/60 bg-black/82 px-6 py-4 text-center text-white shadow-2xl backdrop-blur-md">
-                    <div className="flex items-center justify-center gap-2 text-amber-300 font-bold text-xs uppercase tracking-widest">
-                      <Sparkles className="h-4 w-4" />
-                      <span>
-                        {novaFlash.fxKind === 'nova'
-                          ? 'NOVA STAGE BURST'
-                          : novaFlash.fxKind === 'confetti'
-                            ? 'CROWD CONFETTI FX'
-                            : 'STAGE PULSE HYPE'}
-                      </span>
-                      <Sparkles className="h-4 w-4" />
-                    </div>
-                    <div className="mt-1 font-display text-lg font-extrabold">
-                      {novaFlash.sender} sent {novaFlash.gift}!
-                    </div>
-                    <div className="font-mono-nums text-xs text-[var(--accent-secondary)]">
-                      {novaFlash.coins.toLocaleString()} Coins Crowd Cut
-                    </div>
-                  </div>
                 </div>
-              )}
-
-              <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
-              <div className="absolute inset-x-5 bottom-4 flex items-end justify-between gap-4 text-white">
-                <div className="min-w-0">
-                  <h1 className="font-display text-base sm:text-xl font-bold truncate">
-                    {liveStream.title}
-                  </h1>
-                  <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/85 font-mono-nums">
-                    <span>{countryFlag(liveStream.countryCode)}</span>
-                    <span>{liveStream.hostName}</span>
-                    {liveStream.hostVerified && <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />}
-                    {liveStream.hostNumericId && <span className="opacity-70">#{liveStream.hostNumericId}</span>}
-                    <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
-                    {liveStream.consentVerified && (
-                      <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
-                        CONSENTED
-                      </span>
-                    )}
-                    {slowModeSec > 0 && (
-                      <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
-                        SLOW {slowModeSec}s
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <span className="block font-mono-nums text-xs font-bold tracking-wide text-[var(--accent-primary)]">
-                    ON AIR
-                  </span>
-                  <span className="text-[10px] font-mono-nums text-white/60">
-                    {rtcTurnReady ? 'RTC TURN' : 'RTC STUN'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
+              );
+            }
+            return renderGameStage(false, true);
+          })()}
 
           {/* Co-Host / Co-Publish Rail (up to 4 co-hosts — G-037) */}
           {(coHosts.length > 0 || isHostOrMod) && (
@@ -1520,7 +1789,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                     onClick={() => setPkTarget('challenger')}
                     className={`rounded-md px-2.5 py-1 font-medium cursor-pointer ${
                       pkTarget === 'challenger'
-                        ? 'bg-[var(--accent-secondary)] text-[#0d0d10]'
+                        ? 'border border-[var(--accent-secondary)] bg-[var(--accent-secondary)]/18 text-[var(--fg-primary)] font-semibold'
                         : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
                     }`}
                   >
@@ -1665,24 +1934,58 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                       <span className="text-2xl leading-none">{sticker.emoji}</span>
                       <span className="text-[11px] font-semibold text-[var(--fg-secondary)]">{sticker.label}</span>
                     </div>
-                  ) : (
-                    <p className="mt-0.5 text-xs leading-relaxed text-[var(--fg-secondary)] break-words">
-                      {msg.gift ? (
-                        <span className="font-semibold text-[var(--accent-gold)]">
-                          {msg.text} ({msg.gift.coins} coins)
-                        </span>
-                      ) : (
-                        <>
-                          {msg.text}
-                          {translateOn && translations[msg.id] && (
-                            <span className="mt-0.5 block text-[11px] italic text-[var(--accent-secondary)]">
-                              {translations[msg.id]}
-                            </span>
-                          )}
-                        </>
-                      )}
-                    </p>
-                  )}
+                  ) : (() => {
+                    const mediaTok = !msg.gift ? parseMediaToken(msg.text) : null;
+                    if (mediaTok) {
+                      const asset = mediaLibrary.find((a) => a.id === mediaTok.id);
+                      if (asset) {
+                        return (
+                          <div className="mt-1.5 space-y-1">
+                            {asset.type === 'photo' ? (
+                              <img
+                                src={asset.url}
+                                alt={asset.label}
+                                className="max-h-36 w-full rounded-lg border border-[var(--border-hairline)] object-cover"
+                              />
+                            ) : (
+                              <video
+                                src={asset.url}
+                                controls
+                                className="max-h-36 w-full rounded-lg border border-[var(--border-hairline)] bg-black object-cover"
+                              />
+                            )}
+                            <div className="text-[10px] font-mono-nums text-[var(--fg-muted)] truncate">
+                              {asset.label}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-2 py-1 text-[11px] text-[var(--fg-secondary)]">
+                          <ImageIcon className="h-3.5 w-3.5 text-[var(--accent-secondary)]" />
+                          <span>Shared Studio {mediaTok.kind === 'clip' ? 'Clip' : 'Photo'} · #{mediaTok.id.slice(0, 10)}</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <p className="mt-0.5 text-xs leading-relaxed text-[var(--fg-secondary)] break-words">
+                        {msg.gift ? (
+                          <span className="font-semibold text-[var(--accent-gold)]">
+                            {msg.text} ({msg.gift.coins} coins)
+                          </span>
+                        ) : (
+                          <>
+                            {msg.text}
+                            {translateOn && translations[msg.id] && (
+                              <span className="mt-0.5 block text-[11px] italic text-[var(--accent-secondary)]">
+                                {translations[msg.id]}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </p>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -1750,7 +2053,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                 ))}
               </div>
               {discountPct > 0 && (
-                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-bold text-emerald-400">
+                <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-bold text-emerald-700 dark:text-emerald-400">
                   -{discountPct}% OFF
                 </span>
               )}

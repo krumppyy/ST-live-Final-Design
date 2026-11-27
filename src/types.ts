@@ -193,6 +193,7 @@ export interface Livestream {
   duel?: DiceDuelState;
   gameRoomId?: string;
   gameType?: GameType;
+  stageLayout?: LiveStageLayout;
 }
 
 export interface ChatMessage {
@@ -212,7 +213,9 @@ export interface ChatMessage {
 }
 
 export type PlayerColor = 'red' | 'green' | 'yellow' | 'blue';
-export type GameType = 'ludo' | 'snakes' | 'fps';
+export type GameType = 'ludo' | 'snakes' | 'fps' | 'rpg';
+export type LiveStageLayout = 'video' | 'game_pip' | 'split' | 'game';
+export type RpgHeroClass = 'vanguard' | 'arcanist' | 'ranger' | 'cleric';
 
 export interface GameJoinRequest {
   uid: string;
@@ -226,6 +229,7 @@ export interface FpsCombatantState {
   displayName: string;
   color: PlayerColor;
   isBot: boolean;
+  isBoss?: boolean;
   isHost?: boolean;
   isFollower?: boolean;
   x: number;
@@ -247,9 +251,56 @@ export interface FpsKillFeedItem {
 }
 
 export interface FpsArenaState {
+  level: number;
+  maxLevel: number;
+  levelName: string;
   targetKills: number;
+  enemyDamage: number;
+  botSpeed: number;
+  bossActive: boolean;
+  levelCleared: boolean;
   combatants: Record<string, FpsCombatantState>;
   killFeed: FpsKillFeedItem[];
+}
+
+export interface RpgHeroState {
+  uid: string;
+  displayName: string;
+  color: PlayerColor;
+  heroClass: RpgHeroClass;
+  isBot: boolean;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  atk: number;
+  shield: number;
+  xp: number;
+  heroLevel: number;
+  alive: boolean;
+}
+
+export interface RpgEnemyState {
+  id: string;
+  name: string;
+  kind: 'minion' | 'elite' | 'boss';
+  hp: number;
+  maxHp: number;
+  atk: number;
+  alive: boolean;
+}
+
+export interface RpgArenaState {
+  floor: number;
+  maxFloor: number;
+  zoneName: string;
+  round: number;
+  potions: number;
+  partyGold: number;
+  heroes: Record<string, RpgHeroState>;
+  enemies: RpgEnemyState[];
+  lastActionText: string;
+  floorCleared: boolean;
 }
 
 export interface GamePlayer {
@@ -268,13 +319,20 @@ export interface GameRoomState {
   hostUid: string;
   hostName: string;
   status: 'lobby' | 'playing' | 'finished';
+  level: number;
+  maxLevel: number;
+  levelTitle: string;
+  difficultyLabel: string;
   maxPlayers: number;
   pendingRequests: GameJoinRequest[];
   players: GamePlayer[];
   turnIndex: number;
   diceValue: number | null;
   mustMove: boolean;
+  snakesMap?: Record<number, number>;
+  laddersMap?: Record<number, number>;
   fps?: FpsArenaState;
+  rpg?: RpgArenaState;
   winnerUid: string | null;
   winnerName: string | null;
   log: string[];

@@ -5,7 +5,7 @@ import type {
   ResolutionOption,
 } from './cameraEngine';
 import type { GimbalMode } from './gimbalEngine';
-import type { GameType, StreamCategory } from '../types';
+import type { GameType, LiveStageLayout, StreamCategory } from '../types';
 
 export type ArOverlayId = 'none' | 'snow' | 'confetti' | 'studio_frame' | 'neon_corner';
 
@@ -71,6 +71,7 @@ export interface StudioPresetSpec {
     category: Exclude<StreamCategory, 'all'>;
     maxSeats: number;
     gameType: GameType | '';
+    stageLayout: LiveStageLayout;
     suggestPin: boolean;
     slowModeSec: number;
     enablePkReady: boolean;
@@ -111,6 +112,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'solo',
       maxSeats: 4,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: false,
@@ -119,10 +121,10 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
   },
   {
     id: 'gaming_arena',
-    name: 'Gaming & 3D Arena',
-    tagline: 'Widescreen gameplay capture with Facecam PiP, keyboard BNC gate & live game table.',
+    name: 'Gaming & Co-Op Arena',
+    tagline: 'Switchable Game + Corner Cam PiP or 50/50 Split stage for ST Strike 3D, Realm RPG & board games.',
     badge: '1080p · 60fps',
-    bestFor: '3D FPS Arena, Ludo, Snakes & Ladders, screen streaming',
+    bestFor: 'ST Strike 3D (5 Levels), Realm Quest RPG, Ludo, Snakes & Ladders',
     camera: {
       resolution: '1080p',
       fps: 60,
@@ -134,7 +136,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       dualCamera: false,
       screenSharePip: true,
       arOverlay: 'neon_corner',
-      lowerThirdDefault: 'Squad Open · Request a seat to join the 3D Arena',
+      lowerThirdDefault: 'Squad Open · Request a seat to join ST Strike 3D or Realm RPG',
     },
     hardware: {
       micSource: 'wired',
@@ -144,15 +146,16 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       flashMode: 'off',
     },
     liveRoom: {
-      defaultTitle: 'Nova Strike 3D Arena · Open Squads',
+      defaultTitle: 'ST Strike 3D & Co-Op RPG · Open Squads',
       category: 'games',
       maxSeats: 6,
       gameType: 'fps',
+      stageLayout: 'game_pip',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: false,
     },
-    consoleHighlights: ['Screen Capture + Facecam PiP', 'Keyboard Fan BNC Gate', 'Auto-Linked 3D FPS / Ludo Table', '6-Seat Squad Voice'],
+    consoleHighlights: ['Game + Corner Cam / 50-50 Split', 'Keyboard Fan BNC Gate', 'ST Strike 3D · Realm RPG · Ludo', '6-Seat Squad Voice'],
   },
   {
     id: 'music_stage',
@@ -185,6 +188,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'music_band',
       maxSeats: 8,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: false,
@@ -222,6 +226,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'audio',
       maxSeats: 12,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 3,
       enablePkReady: false,
@@ -259,6 +264,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'pk',
       maxSeats: 4,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: true,
@@ -308,6 +314,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'solo',
       maxSeats: 4,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: false,
@@ -345,6 +352,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'brand_drop',
       maxSeats: 4,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: false,
       slowModeSec: 0,
       enablePkReady: false,
@@ -382,6 +390,7 @@ export const STUDIO_PRESETS: StudioPresetSpec[] = [
       category: 'multi_guest',
       maxSeats: 6,
       gameType: '',
+      stageLayout: 'video',
       suggestPin: true,
       slowModeSec: 0,
       enablePkReady: false,

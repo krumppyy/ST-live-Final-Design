@@ -12,8 +12,8 @@
   --bg-elevated: #efeff4;
   --border-hairline: #e0e0e6;
   --fg-primary: #111114;
-  --fg-secondary: #52525e;
-  --fg-muted: #6e6e7a;
+  --fg-secondary: #484854;
+  --fg-muted: #5c5c69;
 
   --accent-primary: #940000;
   --accent-primary-hover: #7a0000;
@@ -43,8 +43,8 @@
   --bg-elevated: #141419;
   --border-hairline: #2c2c36;
   --fg-primary: #f4f4f6;
-  --fg-secondary: #b3b3bd;
-  --fg-muted: #7f7f8c;
+  --fg-secondary: #c0c0cb;
+  --fg-muted: #9393a3;
 
   --accent-primary: #d90429;
   --accent-primary-hover: #b80322;
@@ -276,8 +276,8 @@ h1, h2, h3, h4, .font-display {
 }
 
 .sl-rail-icon-active {
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  color: #0d0d10;
+  background: var(--accent-primary);
+  color: var(--accent-contrast);
 }
 
 /* Fluid Auto-Stretch Layout Tokens (Adapts seamlessly from 320px phones to 3840px ultrawide) */

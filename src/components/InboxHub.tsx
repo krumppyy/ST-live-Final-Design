@@ -655,7 +655,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <h1 className="font-display text-base font-bold text-[var(--fg-primary)]">Inbox</h1>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-400">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
                   <Lock className="h-2.5 w-2.5" />
                   E2EE
                 </span>
@@ -746,7 +746,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                   <div
                     className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
                       conv.type === 'support'
-                        ? 'bg-[var(--accent-secondary)] text-[#0d0d10]'
+                        ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
                         : conv.type === 'group'
                           ? 'bg-[var(--accent-gold)]/20 text-[var(--accent-gold)]'
                           : 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)]'
@@ -765,7 +765,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate text-xs font-semibold text-[var(--fg-primary)] flex items-center gap-1">
                         {conv.title}
-                        {conv.e2eeEnabled && <Lock className="h-2.5 w-2.5 shrink-0 text-emerald-400" />}
+                        {conv.e2eeEnabled && <Lock className="h-2.5 w-2.5 shrink-0 text-emerald-700 dark:text-emerald-400" />}
                       </span>
                       <span className="shrink-0 font-mono-nums text-[9px] text-[var(--fg-muted)]">
                         {new Date(conv.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -777,7 +777,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                       </span>
                       <div className="flex items-center gap-1 shrink-0">
                         {conv.defaultTtlSec > 0 && (
-                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-0.5 font-mono-nums text-[9px] text-amber-400">
+                          <span className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 py-0.5 font-mono-nums text-[9px] text-amber-700 dark:text-amber-400">
                             <Clock className="h-2.5 w-2.5" />
                             {formatTtlShort(conv.defaultTtlSec)}
                           </span>
@@ -811,7 +811,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
         >
           {!activeConv ? (
             <div className="flex flex-1 flex-col items-center justify-center p-6 text-center space-y-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-emerald-400">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-hairline)] text-emerald-700 dark:text-emerald-400">
                 <ShieldCheck className="h-6 w-6" />
               </div>
               <h2 className="font-display text-base font-bold text-[var(--fg-primary)]">
@@ -844,7 +844,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                           type="button"
                           onClick={() => setSafetyModalOpen(true)}
                           title="Verify Encryption Safety Number"
-                          className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 cursor-pointer"
+                          className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700 dark:text-emerald-400 cursor-pointer"
                         >
                           <ShieldCheck className="h-2.5 w-2.5" />
                           <span>E2EE</span>
@@ -873,7 +873,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                     title="Disappearing Message Timer"
                     className={`inline-flex h-8 items-center gap-1 rounded-lg border px-2 text-[10px] font-semibold cursor-pointer ${
                       activeConv.defaultTtlSec > 0
-                        ? 'border-amber-500/50 bg-amber-500/15 text-amber-400'
+                        ? 'border-amber-500/50 bg-amber-500/15 text-amber-700 dark:text-amber-400'
                         : 'border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
                     }`}
                   >
@@ -931,7 +931,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                     return (
                       <div key={msg.id} className="flex justify-center">
                         <span className="inline-flex items-center gap-1 rounded-full border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3 py-1 text-[10px] text-[var(--fg-secondary)]">
-                          <Lock className="h-2.5 w-2.5 text-emerald-400" />
+                          <Lock className="h-2.5 w-2.5 text-emerald-700 dark:text-emerald-400" />
                           <span>{msg.ciphertext}</span>
                         </span>
                       </div>
@@ -1006,6 +1006,36 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                               </div>
                             );
                           }
+                          const tokMatch = plain.trim().match(/^\[(photo|clip):([a-zA-Z0-9_-]{3,48})\]$/);
+                          if (tokMatch) {
+                            const asset = mediaLibrary.find((a) => a.id === tokMatch[2]);
+                            if (asset) {
+                              return (
+                                <div className="space-y-1">
+                                  {asset.type === 'photo' ? (
+                                    <img
+                                      src={asset.url}
+                                      alt={asset.label}
+                                      className="max-h-52 rounded-xl object-cover"
+                                    />
+                                  ) : (
+                                    <video
+                                      src={asset.url}
+                                      controls
+                                      className="max-h-52 rounded-xl bg-black object-cover"
+                                    />
+                                  )}
+                                  <div className="text-[10px] opacity-85 truncate">{asset.label}</div>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="inline-flex items-center gap-1.5 text-[11px] font-medium">
+                                <ImageIcon className="h-3.5 w-3.5" />
+                                <span>Studio {tokMatch[1] === 'clip' ? 'Clip' : 'Photo'} · #{tokMatch[2].slice(0, 10)}</span>
+                              </div>
+                            );
+                          }
                           return <p className="whitespace-pre-wrap break-words leading-relaxed">{plain}</p>;
                         })()}
 
@@ -1013,7 +1043,11 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                         <div className="mt-1 flex items-center justify-end gap-1.5 text-[9px] opacity-75">
                           {msg.encrypted && <Lock className="h-2.5 w-2.5" />}
                           {remaining && (
-                            <span className="inline-flex items-center gap-0.5 font-mono-nums font-bold text-amber-300">
+                            <span
+                              className={`inline-flex items-center gap-0.5 font-mono-nums font-bold ${
+                                isMine ? 'text-amber-200' : 'text-amber-700 dark:text-amber-300'
+                              }`}
+                            >
                               <Clock className="h-2.5 w-2.5" />
                               {remaining}
                             </span>
@@ -1242,7 +1276,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
           <div className="w-full max-w-md rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 space-y-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-[var(--fg-primary)] flex items-center gap-1.5">
-                <Lock className="h-4 w-4 text-emerald-400" />
+                <Lock className="h-4 w-4 text-emerald-700 dark:text-emerald-400" />
                 New 1-on-1 Encrypted Chat
               </h3>
               <button type="button" onClick={() => setNewDmOpen(false)} className="p-1 text-[var(--fg-muted)] cursor-pointer">
@@ -1260,7 +1294,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
               <button
                 type="button"
                 onClick={() => handleStartDm(dmUidInput)}
-                className="h-9 rounded-lg bg-[var(--accent-primary)] px-3 text-xs font-semibold text-white cursor-pointer"
+                className="h-9 rounded-lg bg-[var(--accent-primary)] px-3 text-xs font-semibold text-[var(--accent-contrast)] cursor-pointer"
               >
                 Start
               </button>
@@ -1284,7 +1318,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                         {u.numericId ? `#${u.numericId} · ` : ''}{u.uid} · {u.role}
                       </p>
                     </div>
-                    <Lock className="h-3.5 w-3.5 text-emerald-400" />
+                    <Lock className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
                   </button>
                 ))}
             </div>
@@ -1553,7 +1587,7 @@ export const InboxHub: React.FC<InboxHubProps> = ({
                 <button
                   type="button"
                   onClick={handleApplyCustomTimer}
-                  className="h-8 rounded-lg bg-[var(--accent-secondary)] px-3 text-xs font-bold text-[#0d0d10] cursor-pointer"
+                  className="h-8 rounded-lg bg-[var(--accent-primary)] px-3 text-xs font-bold text-[var(--accent-contrast)] cursor-pointer"
                 >
                   Set
                 </button>
@@ -1567,14 +1601,14 @@ export const InboxHub: React.FC<InboxHubProps> = ({
       {safetyModalOpen && activeConv && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-2xl border border-emerald-500/35 bg-[var(--bg-surface)] p-5 space-y-3 text-center">
-            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
               <ShieldCheck className="h-6 w-6" />
             </div>
             <h3 className="text-sm font-bold text-[var(--fg-primary)]">End-to-End Encryption</h3>
             <p className="text-[11px] text-[var(--fg-secondary)]">
               Messages and photos in <span className="font-semibold text-[var(--fg-primary)]">{activeConv.title}</span> are encrypted client-side with AES-256-GCM. Compare this 60-digit safety number:
             </p>
-            <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] p-3 font-mono-nums text-xs tracking-widest text-emerald-400 leading-relaxed">
+            <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] p-3 font-mono-nums text-xs tracking-widest text-emerald-700 dark:text-emerald-400 leading-relaxed">
               {safetyNumber || 'Computing...'}
             </div>
             <button

@@ -25,7 +25,9 @@ import type {
   BandEvent,
   BrandDrop,
   DirectoryUser,
+  GameType,
   Livestream,
+  LiveStageLayout,
 } from '../types';
 
 interface RoleWorkspaceProps {
@@ -61,7 +63,7 @@ const COMPARISON_ROWS = [
   },
   {
     feature: 'Multiplayer Games',
-    stlive: 'In-stream 3D First-Person Shooter, Ludo & Snakes with Follower Join Request -> Host Approval',
+    stlive: 'In-stream ST Strike 3D (5 Levels), Realm Quest Co-Op RPG, Ludo & Snakes with 4 switchable Camera + Game stage modes',
     bigo: 'Draw & Guess / casual voice games',
     buzzcast: 'Party chat mini-games',
     mango: 'Gift-driven lucky games',
@@ -77,7 +79,7 @@ const COMPARISON_ROWS = [
   },
   {
     feature: 'Accessibility & Type',
-    stlive: '6 languages (RTL Arabic) + 5 switchable fonts + 4 text sizes + 4 color grades',
+    stlive: '20 languages (RTL Arabic/Urdu) + 6 switchable fonts + 4 text sizes + 37 WCAG themes',
     bigo: 'Fixed UI font & fixed size',
     buzzcast: 'Fixed UI font, chat translate',
     mango: 'Fixed UI font & palette',
@@ -117,7 +119,8 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
   const [liveTitle, setLiveTitle] = useState('');
   const [liveCategory, setLiveCategory] = useState<Livestream['category']>('solo');
   const [liveSeats, setLiveSeats] = useState(6);
-  const [liveGameType, setLiveGameType] = useState<'' | 'fps' | 'ludo' | 'snakes'>('fps');
+  const [liveGameType, setLiveGameType] = useState<'' | GameType>('fps');
+  const [liveStageLayout, setLiveStageLayout] = useState<LiveStageLayout>('game_pip');
   const [liveConsentChecked, setLiveConsentChecked] = useState(false);
 
   // Admin state
@@ -301,6 +304,7 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
         category: liveCategory,
         maxSeats: liveSeats,
         gameType: liveGameType || undefined,
+        stageLayout: liveGameType ? liveStageLayout : 'video',
         consentVerified: true,
       }),
     });
@@ -550,12 +554,18 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
               </select>
               <select
                 value={liveGameType}
-                onChange={(e) => setLiveGameType(e.target.value as '' | 'fps' | 'ludo' | 'snakes')}
+                onChange={(e) => {
+                  const val = e.target.value as '' | GameType;
+                  setLiveGameType(val);
+                  if (val && liveStageLayout === 'video') setLiveStageLayout('game_pip');
+                  if (!val) setLiveStageLayout('video');
+                }}
                 className="h-11 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3 text-sm text-[var(--fg-primary)]"
               >
-                <option value="fps">Attach 3D FPS Arena</option>
-                <option value="ludo">Attach Ludo Table</option>
-                <option value="snakes">Attach Snakes Table</option>
+                <option value="fps">Attach ST Strike 3D (5 Levels)</option>
+                <option value="rpg">Attach Realm Quest Co-Op RPG</option>
+                <option value="ludo">Attach Ludo Arena (3 Levels)</option>
+                <option value="snakes">Attach Snakes & Ladders (3 Levels)</option>
                 <option value="">No Attached Game</option>
               </select>
               <button
@@ -576,22 +586,49 @@ export const RoleWorkspace: React.FC<RoleWorkspaceProps> = ({
                 </span>
               </label>
             </form>
-            <div className="flex items-center gap-3 text-xs text-[var(--fg-secondary)]">
-              <span>Multi-Guest Stage Capacity:</span>
-              {[4, 6, 8, 12].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setLiveSeats(n)}
-                  className={`rounded-md px-2.5 py-1 font-mono-nums cursor-pointer ${
-                    liveSeats === n
-                      ? 'bg-[var(--fg-primary)] text-[var(--bg-canvas)] font-semibold'
-                      : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
-                  }`}
-                >
-                  {n} seats
-                </button>
-              ))}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--fg-secondary)]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span>Multi-Guest Stage Capacity:</span>
+                {[4, 6, 8, 12].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setLiveSeats(n)}
+                    className={`rounded-md px-2.5 py-1 font-mono-nums cursor-pointer ${
+                      liveSeats === n
+                        ? 'bg-[var(--fg-primary)] text-[var(--bg-canvas)] font-semibold'
+                        : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
+                    }`}
+                  >
+                    {n} seats
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span>Stage Mode:</span>
+                {([
+                  ['video', 'Stream'],
+                  ['game_pip', 'Game + Cam'],
+                  ['split', '50/50 Split'],
+                  ['game', 'Full Game'],
+                ] as const).map(([layoutId, label]) => (
+                  <button
+                    key={layoutId}
+                    type="button"
+                    onClick={() => {
+                      setLiveStageLayout(layoutId);
+                      if (layoutId !== 'video' && !liveGameType) setLiveGameType('fps');
+                    }}
+                    className={`rounded-md px-2.5 py-1 font-medium cursor-pointer ${
+                      liveStageLayout === layoutId
+                        ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold'
+                        : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)]'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
 

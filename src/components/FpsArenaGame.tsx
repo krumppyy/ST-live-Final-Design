@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { ChevronDown, ChevronUp, Crosshair, RotateCw, Shield, Target } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronUp, Crosshair, RotateCw, Shield, Target } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import {
   playFpsHitSfx,
@@ -393,11 +393,22 @@ function buildCombatantModel(combatant: FpsCombatantState): THREE.Group {
   root.add(pod);
 
   // Overhead Nameplate + HP Sprite
-  const tag = combatant.isHost ? 'HOST' : combatant.isBot ? 'BOT' : combatant.isFollower ? 'FOLLOWER' : undefined;
+  const tag = combatant.isBoss
+    ? 'BOSS'
+    : combatant.isHost
+      ? 'HOST'
+      : combatant.isBot
+        ? 'DRONE'
+        : combatant.isFollower
+          ? 'FOLLOWER'
+          : undefined;
   const nameplate = createNameplateSprite(combatant.displayName, combatant.hp, combatant.maxHp, teamColor, tag);
   nameplate.name = 'nameplate';
   root.add(nameplate);
 
+  if (combatant.isBoss) {
+    root.scale.set(1.28, 1.28, 1.28);
+  }
   root.position.set(combatant.x, 0, combatant.z);
   root.rotation.y = combatant.yaw;
   return root;
@@ -424,7 +435,9 @@ export const FpsArenaGame: React.FC<FpsArenaGameProps> = ({
   const [reloading, setReloading] = useState(false);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [hitMarker, setHitMarker] = useState<'none' | 'body' | 'head'>('none');
+  const [damageFlash, setDamageFlash] = useState(false);
   const [hudCollapsed, setHudCollapsed] = useState(false);
+  const prevHpRef = useRef<number>(100);
 
   const ammoRef = useRef(24);
   const reloadingRef = useRef(false);
@@ -464,6 +477,12 @@ export const FpsArenaGame: React.FC<FpsArenaGameProps> = ({
         const data = payload as { roomId: string; combatants: Record<string, FpsCombatantState> };
         if (data.roomId === roomIdRef.current && data.combatants) {
           combatantsRef.current = data.combatants;
+          const me = sessionUidRef.current ? data.combatants[sessionUidRef.current] : undefined;
+          if (me && me.hp < prevHpRef.current) {
+            setDamageFlash(true);
+            window.setTimeout(() => setDamageFlash(false), 180);
+          }
+          if (me) prevHpRef.current = me.hp;
         }
       }
     });
@@ -956,7 +975,7 @@ export const FpsArenaGame: React.FC<FpsArenaGameProps> = ({
         meshGrp.rotation.y = THREE.MathUtils.damp(meshGrp.rotation.y, c.yaw, 8, dt);
         const plate = meshGrp.getObjectByName('nameplate') as THREE.Sprite | undefined;
         if (plate) {
-          const tag = c.isHost ? 'HOST' : c.isBot ? 'BOT' : c.isFollower ? 'FOLLOWER' : undefined;
+          const tag = c.isBoss ? 'BOSS' : c.isHost ? 'HOST' : c.isBot ? 'DRONE' : c.isFollower ? 'FOLLOWER' : undefined;
           updateNameplateSprite(plate, c.displayName, c.hp, c.maxHp, TEAM_HEX[c.color] || 0xd90429, tag);
         }
       }
@@ -1033,18 +1052,31 @@ export const FpsArenaGame: React.FC<FpsArenaGameProps> = ({
       {/* Isolated WebGL Canvas Container */}
       <div ref={mountRef} className="h-full w-full cursor-crosshair" />
 
+      {/* Incoming Enemy Fire Vignette Flash */}
+      {damageFlash && (
+        <div className="pointer-events-none absolute inset-0 border-4 border-rose-500/80 bg-rose-600/15" />
+      )}
+
       {/* Top Minimal Spec Badge + Live Kill Feed (Solid RGBA, no backdrop-blur over WebGL) */}
       <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-2">
-        <div className="rounded-xl border border-white/10 bg-[#0d0d10]/85 px-3 py-1.5 text-white">
-          <div className="flex items-center gap-2 text-xs font-bold tracking-tight">
+        <div className="rounded-xl border border-white/10 bg-[#0d0d10]/88 px-3 py-1.5 text-white">
+          <div className="flex flex-wrap items-center gap-2 text-xs font-bold tracking-tight">
             <Target className="h-3.5 w-3.5 text-[#D90429]" />
-            <span>NOVA STRIKE 3D FPS</span>
-            <span className="font-mono-nums text-[#A3E635]">
-              First to {game.fps?.targetKills || 15}
+            <span>ST STRIKE 3D</span>
+            <span className="font-mono-nums text-[#E8C86A]">
+              LVL {game.fps?.level ?? game.level ?? 1}/{game.fps?.maxLevel ?? 5} · {game.fps?.levelName || game.levelTitle || 'Training Yard'}
             </span>
+            <span className="font-mono-nums text-[#A3E635]">
+              Target {game.fps?.targetKills || 5}K
+            </span>
+            {game.fps?.bossActive && (
+              <span className="rounded bg-[#D90429]/85 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                BOSS
+              </span>
+            )}
           </div>
           {leaderboard.length > 0 && (
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono-nums text-white/80">
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] font-mono-nums text-white/85">
               {leaderboard.map((c, idx) => (
                 <span key={c.uid} className={c.uid === session?.uid ? 'text-[#A3E635] font-bold' : ''}>
                   #{idx + 1} {c.displayName.split(' ')[0]} {c.kills}K
@@ -1059,16 +1091,59 @@ export const FpsArenaGame: React.FC<FpsArenaGameProps> = ({
             {killFeed.map((kf) => (
               <div
                 key={kf.id}
-                className="rounded-lg border border-white/10 bg-[#0d0d10]/85 px-2.5 py-1 text-[11px] text-white font-mono-nums"
+                className="rounded-lg border border-white/10 bg-[#0d0d10]/88 px-2.5 py-1 text-[11px] text-white font-mono-nums"
               >
                 <span className="text-[#A3E635] font-semibold">{kf.killerName}</span>
                 <span className="mx-1.5 text-[#D90429]">{kf.headshot ? 'HS' : '→'}</span>
-                <span className="text-white/80">{kf.victimName}</span>
+                <span className="text-white/85">{kf.victimName}</span>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* Level Cleared Progression Callout */}
+      {game.status === 'finished' && game.fps?.levelCleared && (
+        <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 z-20 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto rounded-2xl border border-[#A3E635]/50 bg-[#0d0d10]/94 px-5 py-4 text-center text-white shadow-2xl space-y-2.5 max-w-sm">
+            <div className="text-xs font-mono-nums font-bold text-[#A3E635]">
+              LEVEL {game.fps.level} CLEARED · {game.fps.levelName.toUpperCase()}
+            </div>
+            <div className="font-display text-base font-bold">
+              {game.winnerName} led the squad!
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              {game.fps.level < game.fps.maxLevel && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    sendWsEvent('game:set_level', {
+                      roomId: game.roomId,
+                      level: game.fps!.level + 1,
+                    })
+                  }
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#D90429] px-4 text-xs font-bold text-white hover:bg-[#ef233c] cursor-pointer"
+                >
+                  <span>Next Level ({game.fps.level + 1})</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  sendWsEvent('game:set_level', {
+                    roomId: game.roomId,
+                    level: game.fps!.level,
+                  })
+                }
+                className="inline-flex h-9 items-center gap-1 rounded-lg border border-white/25 px-3 text-xs font-semibold text-white hover:border-white cursor-pointer"
+              >
+                Replay
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Center Tactical Reticle (Active Player) */}
       {isSeated && (

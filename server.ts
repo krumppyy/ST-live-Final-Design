@@ -47,9 +47,12 @@ import type {
   AuthSession,
   ChatMessage,
   DiceDuelState,
+  GameType,
   Livestream,
+  LiveStageLayout,
   MultiGuestSeat,
   PKState,
+  RpgHeroClass,
   UserRole,
 } from './src/types';
 
@@ -113,15 +116,19 @@ const ALLOWED_WS_EVENTS = new Set([
   'room:cohost_invite',
   'room:cohost_accept',
   'room:cohost_leave',
+  'room:stage_layout',
   'game:request_join',
   'game:approve_player',
   'game:decline_player',
   'game:add_bot',
   'game:restart',
+  'game:set_level',
   'game:roll_dice',
   'game:move_piece',
   'game:fps_pose',
   'game:fps_hit',
+  'game:rpg_action',
+  'game:rpg_class',
   'inbox:typing',
   'duel:start',
   'duel:join_roll',
@@ -153,6 +160,7 @@ interface LiveRoomRuntime {
   slowModeSec: number;
   lastChatAtByUid: Map<string, number>;
   coHosts: CoHostEntry[];
+  stageLayout: LiveStageLayout;
 }
 
 const roomRuntimes = new Map<string, LiveRoomRuntime>();
@@ -203,6 +211,7 @@ function getOrCreateRuntime(streamId: string, maxSeats: number, hostUid: string,
       slowModeSec: 0,
       lastChatAtByUid: new Map(),
       coHosts: [],
+      stageLayout: 'video',
     };
     roomRuntimes.set(streamId, rt);
   }
@@ -220,6 +229,7 @@ function buildRoomStatePayload(roomId: string, rt: LiveRoomRuntime) {
     followers: Array.from(rt.followers),
     slowModeSec: rt.slowModeSec,
     coHosts: rt.coHosts,
+    stageLayout: rt.stageLayout,
   };
 }
 
@@ -231,6 +241,7 @@ function hydrateStreams(): Livestream[] {
       seats: rt.seats,
       pk: rt.pk,
       duel: rt.duel,
+      stageLayout: rt.stageLayout,
     };
   });
 }
@@ -295,26 +306,43 @@ function scheduleBotTurnIfNeeded(roomId: string) {
     const current = latest.players[latest.turnIndex];
     if (!current || !current.isBot) return;
 
+    if (latest.gameType === 'rpg' && latest.rpg) {
+      const hero = latest.rpg.heroes[current.uid];
+      const woundedAlly = Object.values(latest.rpg.heroes).some((h) => h.alive && h.hp < h.maxHp * 0.65);
+      const act: 'strike' | 'skill' | 'defend' =
+        hero && hero.heroClass === 'cleric' && woundedAlly && hero.mp >= 18
+          ? 'skill'
+          : hero && hero.mp >= 18 && Math.random() < 0.45
+            ? 'skill'
+            : 'strike';
+      const livingEnemies = latest.rpg.enemies.filter((e) => e.alive);
+      const targetId = livingEnemies[0]?.id;
+      const acted = gameEngine.rpgAction(roomId, current.uid, act, targetId, true);
+      if (acted.room) broadcastGame(roomId);
+      return;
+    }
+
     if (!latest.mustMove) {
       const rolled = gameEngine.rollDice(roomId, current.uid, true);
       if (rolled.room) {
         broadcastAll('game:state', rolled.room);
         if (rolled.room.mustMove && rolled.room.diceValue !== null) {
-          const legal = gameEngine.getLegalLudoTokens(current, rolled.room.diceValue);
+          const legal = gameEngine.getLegalLudoTokens(current, rolled.room.diceValue, rolled.room.level);
           if (legal.length > 0) {
+            const pick = gameEngine.chooseSmartLudoToken(rolled.room, current, rolled.room.diceValue);
             setTimeout(() => {
-              const moved = gameEngine.movePiece(roomId, current.uid, legal[0], true);
+              const moved = gameEngine.movePiece(roomId, current.uid, pick, true);
               if (moved.room) {
                 broadcastGame(roomId);
               }
-            }, 550);
+            }, 520);
             return;
           }
         }
         scheduleBotTurnIfNeeded(roomId);
       }
     }
-  }, 750);
+  }, 700);
 }
 
 // Auth helper for REST routes
@@ -518,10 +546,22 @@ app.post('/api/streams', (req, res) => {
       ? req.body.countryCode.trim().toUpperCase().slice(0, 2)
       : session.countryCode || 'US';
   const maxSeats = Math.min(12, Math.max(2, Number(req.body?.maxSeats) || 4));
-  const gameType =
-    req.body?.gameType === 'ludo' || req.body?.gameType === 'snakes' || req.body?.gameType === 'fps'
+  const gameType: GameType | null =
+    req.body?.gameType === 'ludo' ||
+    req.body?.gameType === 'snakes' ||
+    req.body?.gameType === 'fps' ||
+    req.body?.gameType === 'rpg'
       ? req.body.gameType
       : null;
+  const requestedStageLayout: LiveStageLayout =
+    req.body?.stageLayout === 'game_pip' ||
+    req.body?.stageLayout === 'split' ||
+    req.body?.stageLayout === 'game' ||
+    req.body?.stageLayout === 'video'
+      ? req.body.stageLayout
+      : gameType
+        ? 'game_pip'
+        : 'video';
   const rawPin = typeof req.body?.pin === 'string' ? req.body.pin.trim() : '';
   const hasPin = /^\d{6}$/.test(rawPin);
   // Strict opt-in broadcast safety & 18+ consent enforcement (G-044)
@@ -560,7 +600,14 @@ app.post('/api/streams', (req, res) => {
   const id = `room-${crypto.randomBytes(4).toString('hex')}`;
   let gameRoomId: string | null = null;
   if (gameType) {
-    const label = gameType === 'fps' ? '3D FPS Arena' : gameType === 'ludo' ? 'Ludo' : 'Snakes';
+    const label =
+      gameType === 'fps'
+        ? 'ST Strike 3D'
+        : gameType === 'rpg'
+          ? 'Realm Quest RPG'
+          : gameType === 'ludo'
+            ? 'Ludo'
+            : 'Snakes & Ladders';
     const createdGame = gameEngine.createRoom({
       title: `${title} — ${label}`,
       gameType,
@@ -591,6 +638,9 @@ app.post('/api/streams', (req, res) => {
     consentVerified ? 1 : 0,
     Date.now()
   );
+
+  const rt = getOrCreateRuntime(id, maxSeats, session.uid, session.displayName);
+  rt.stageLayout = requestedStageLayout;
 
   const streams = hydrateStreams();
   broadcastAll('streams:updated', streams);
@@ -912,21 +962,31 @@ app.post('/api/games', (req, res) => {
   if (session.role !== 'host' && session.role !== 'band') {
     return res.status(403).json({ error: 'Only Hosts can create a new multiplayer game table.' });
   }
-  const gameType =
+  const gameType: GameType =
     req.body?.gameType === 'snakes'
       ? 'snakes'
       : req.body?.gameType === 'fps'
         ? 'fps'
-        : 'ludo';
+        : req.body?.gameType === 'rpg'
+          ? 'rpg'
+          : 'ludo';
   const defaultLabel =
-    gameType === 'fps' ? 'Nova Strike 3D FPS' : gameType === 'ludo' ? 'Ludo Table' : 'Snakes Table';
+    gameType === 'fps'
+      ? 'ST Strike 3D Arena'
+      : gameType === 'rpg'
+        ? 'Realm Quest Co-Op RPG'
+        : gameType === 'ludo'
+          ? 'Ludo Table'
+          : 'Snakes Table';
   const title =
     typeof req.body?.title === 'string' ? req.body.title : `${session.displayName}'s ${defaultLabel}`;
+  const level = Number(req.body?.level) || 1;
   const room = gameEngine.createRoom({
     title,
     gameType,
     hostUid: session.uid,
     hostName: session.displayName,
+    level,
   });
   broadcastAll('game:state', room);
   res.status(201).json({ game: room });
@@ -1347,7 +1407,13 @@ wss.on('connection', (ws, req) => {
     if (event === 'room:launch_game') {
       const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
       const requestedType =
-        payload.gameType === 'fps' || payload.gameType === 'snakes' ? payload.gameType : 'ludo';
+        payload.gameType === 'fps' || payload.gameType === 'snakes' || payload.gameType === 'rpg'
+          ? payload.gameType
+          : 'ludo';
+      const requestedLayout: LiveStageLayout =
+        payload.stageLayout === 'split' || payload.stageLayout === 'game' || payload.stageLayout === 'game_pip'
+          ? payload.stageLayout
+          : 'game_pip';
       if (!roomId || !meta.session) {
         sendWs(ws, 'ws:error', { message: 'Sign in as a Host to launch an in-stream game.' });
         return;
@@ -1357,13 +1423,20 @@ wss.on('connection', (ws, req) => {
       const canLaunch =
         canModerateHost(meta.session, stream.hostUid, 'canApproveGames') ||
         meta.session.role === 'host' ||
-        meta.session.role === 'band';
+        meta.session.role === 'band' ||
+        meta.session.role === 'staff';
       if (!canLaunch) {
         sendWs(ws, 'ws:error', { message: 'Only Hosts or authorized Admins can launch live games in this stream.' });
         return;
       }
       const gameLabel =
-        requestedType === 'fps' ? 'Nova Strike 3D FPS' : requestedType === 'ludo' ? 'Ludo' : 'Snakes & Ladders';
+        requestedType === 'fps'
+          ? 'ST Strike 3D'
+          : requestedType === 'rpg'
+            ? 'Realm Quest Co-Op RPG'
+            : requestedType === 'ludo'
+              ? 'Ludo'
+              : 'Snakes & Ladders';
       const createdGame = gameEngine.createRoom({
         title: `${stream.hostName} Live — ${gameLabel}`,
         gameType: requestedType,
@@ -1375,9 +1448,11 @@ wss.on('connection', (ws, req) => {
         requestedType,
         stream.id
       );
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      rt.stageLayout = requestedLayout;
       broadcastAll('game:state', createdGame);
       broadcastAll('streams:updated', hydrateStreams());
-      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      broadcastRoom(stream.id, 'room:state', buildRoomStatePayload(stream.id, rt));
       const announce: ChatMessage = {
         id: crypto.randomUUID(),
         roomId: stream.id,
@@ -1390,6 +1465,20 @@ wss.on('connection', (ws, req) => {
       };
       rt.messages.push(announce);
       broadcastRoom(stream.id, 'room:chat_msg', announce);
+      return;
+    }
+
+    if (event === 'room:stage_layout') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      const layout = payload.layout as LiveStageLayout;
+      const allowedLayouts: LiveStageLayout[] = ['video', 'game_pip', 'split', 'game'];
+      if (!roomId || !meta.session || !allowedLayouts.includes(layout)) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      if (!canModerateHost(meta.session, stream.hostUid, 'canApproveGames') && meta.session.role !== 'staff') return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      rt.stageLayout = layout;
+      broadcastRoom(stream.id, 'room:state', buildRoomStatePayload(stream.id, rt));
       return;
     }
 
@@ -1768,6 +1857,51 @@ wss.on('connection', (ws, req) => {
       const result = gameEngine.registerFpsHit(roomId, meta.session.uid, targetUid, headshot);
       if (result.error) sendWs(ws, 'ws:error', { message: result.error });
       else if (result.room) broadcastAll('game:state', result.room);
+      return;
+    }
+
+    if (event === 'game:set_level') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
+      const nextLevel = Number(payload.level);
+      const room = gameEngine.getRoom(roomId);
+      if (!room || !meta.session || Number.isNaN(nextLevel)) return;
+      const isSeated = room.players.some((p) => p.uid === meta.session!.uid);
+      const canControl =
+        canModerateHost(meta.session, room.hostUid, 'canApproveGames') ||
+        meta.session.role === 'staff' ||
+        (isSeated && room.status === 'finished');
+      if (!canControl) {
+        sendWs(ws, 'ws:error', { message: 'Only the Host (or winning squad) can change levels.' });
+        return;
+      }
+      const result = gameEngine.setLevel(roomId, nextLevel);
+      if (result.error) sendWs(ws, 'ws:error', { message: result.error });
+      else broadcastGame(roomId);
+      return;
+    }
+
+    if (event === 'game:rpg_action') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
+      const action = payload.action;
+      const targetEnemyId = typeof payload.targetEnemyId === 'string' ? payload.targetEnemyId : undefined;
+      if (!meta.session || !roomId) {
+        sendWs(ws, 'ws:error', { message: 'Sign in to play Realm Quest RPG.' });
+        return;
+      }
+      if (action !== 'strike' && action !== 'skill' && action !== 'defend' && action !== 'potion') return;
+      const result = gameEngine.rpgAction(roomId, meta.session.uid, action, targetEnemyId);
+      if (result.error) sendWs(ws, 'ws:error', { message: result.error });
+      else broadcastGame(roomId);
+      return;
+    }
+
+    if (event === 'game:rpg_class') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : '';
+      const heroClass = payload.heroClass as RpgHeroClass;
+      if (!meta.session || !roomId) return;
+      const result = gameEngine.rpgChooseClass(roomId, meta.session.uid, heroClass);
+      if (result.error) sendWs(ws, 'ws:error', { message: result.error });
+      else broadcastGame(roomId);
       return;
     }
 

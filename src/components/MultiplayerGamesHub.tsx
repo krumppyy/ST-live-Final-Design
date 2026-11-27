@@ -8,6 +8,7 @@ import {
   Plus,
   RotateCcw,
   Star,
+  Swords,
   UserPlus,
   X,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import { useApp } from '../context/AppContext';
 import { playDiceSfx, playStepSfx, playVictorySfx } from '../lib/sfx';
 import type { GamePlayer, GameRoomState, GameType, PlayerColor } from '../types';
 import { FpsArenaGame } from './FpsArenaGame';
+import { RpgDungeonGame } from './RpgDungeonGame';
 
 interface MultiplayerGamesHubProps {
   initialRoomId?: string | null;
@@ -149,13 +151,29 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
     if (!activeGame || activeGame.gameType !== 'ludo' || !activeGame.mustMove || !activeGame.diceValue || !currentPlayer) {
       return new Set<number>();
     }
+    const deployOnFive = activeGame.level === 2;
+    const canDeploy = activeGame.diceValue === 6 || (deployOnFive && activeGame.diceValue === 5);
     const set = new Set<number>();
     currentPlayer.tokens.forEach((pos, idx) => {
-      if (pos === -1 && activeGame.diceValue === 6) set.add(idx);
+      if (pos === -1 && canDeploy) set.add(idx);
       else if (pos >= 0 && pos < 56 && pos + activeGame.diceValue! <= 56) set.add(idx);
     });
     return set;
   }, [activeGame, currentPlayer]);
+
+  const activeSnakesPairs = useMemo(() => {
+    if (activeGame?.snakesMap) {
+      return Object.entries(activeGame.snakesMap).map(([h, tail]) => [Number(h), Number(tail)] as [number, number]);
+    }
+    return SNAKES;
+  }, [activeGame?.snakesMap]);
+
+  const activeLaddersPairs = useMemo(() => {
+    if (activeGame?.laddersMap) {
+      return Object.entries(activeGame.laddersMap).map(([f, to]) => [Number(f), Number(to)] as [number, number]);
+    }
+    return LADDERS;
+  }, [activeGame?.laddersMap]);
 
   const handleCreateTable = async (gameType: GameType) => {
     if (!session) {
@@ -164,13 +182,19 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
     }
     setCreating(true);
     try {
+      const label =
+        gameType === 'fps'
+          ? 'ST Strike 3D Arena'
+          : gameType === 'rpg'
+            ? 'Realm Quest RPG Raid'
+            : gameType === 'ludo'
+              ? 'Ludo Table'
+              : 'Snakes Table';
       const res = await authFetch('/api/games', {
         method: 'POST',
         body: JSON.stringify({
           gameType,
-          title: `${session.displayName}'s Live ${
-            gameType === 'fps' ? '3D FPS Arena' : gameType === 'ludo' ? 'Ludo Table' : 'Snakes Table'
-          }`,
+          title: `${session.displayName}'s Live ${label}`,
         }),
       });
       const data = await res.json();
@@ -221,7 +245,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
           </p>
         </div>
 
-        {(session?.role === 'host' || session?.role === 'band') && (
+        {(session?.role === 'host' || session?.role === 'band' || session?.role === 'staff') && (
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -230,7 +254,16 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
               className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-[var(--accent-primary)] px-3.5 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
             >
               <Crosshair className="h-4 w-4" />
-              <span>New 3D FPS Arena</span>
+              <span>New ST Strike 3D</span>
+            </button>
+            <button
+              type="button"
+              disabled={creating}
+              onClick={() => handleCreateTable('rpg')}
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[var(--accent-primary)]/50 bg-[var(--accent-primary)]/10 px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+            >
+              <Swords className="h-4 w-4 text-[var(--accent-primary)]" />
+              <span>New RPG Raid</span>
             </button>
             <button
               type="button"
@@ -239,7 +272,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
               className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>New Ludo Table</span>
+              <span>New Ludo</span>
             </button>
             <button
               type="button"
@@ -248,7 +281,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
               className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
             >
               <Plus className="h-4 w-4" />
-              <span>New Snakes Table</span>
+              <span>New Snakes</span>
             </button>
           </div>
         )}
@@ -258,25 +291,32 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
         {games.map((g) => {
           const active = g.roomId === activeGame?.roomId;
-          const badge = g.gameType === 'fps' ? '3D FPS' : g.gameType === 'ludo' ? 'Ludo' : 'Snakes';
+          const badge =
+            g.gameType === 'fps'
+              ? 'ST Strike'
+              : g.gameType === 'rpg'
+                ? 'RPG Raid'
+                : g.gameType === 'ludo'
+                  ? 'Ludo'
+                  : 'Snakes';
           return (
             <button
               key={g.roomId}
               type="button"
               onClick={() => setSelectedId(g.roomId)}
-              className={`flex h-11 items-center gap-2.5 rounded-xl border px-4 text-sm whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
+              className={`flex h-11 items-center gap-2 rounded-xl border px-4 text-sm whitespace-nowrap shrink-0 transition-colors cursor-pointer ${
                 active
                   ? 'border-[var(--accent-primary)] bg-[var(--bg-surface)] font-semibold text-[var(--fg-primary)]'
                   : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
               }`}
             >
-              <span className={g.gameType === 'fps' ? 'text-[var(--accent-primary)] font-bold' : ''}>
+              <span className={g.gameType === 'fps' || g.gameType === 'rpg' ? 'text-[var(--accent-primary)] font-bold' : ''}>
                 {badge}
               </span>
               <span aria-hidden="true">·</span>
               <span>{g.title}</span>
               <span className="font-mono-nums text-xs text-[var(--fg-muted)]">
-                ({g.players.length}/{g.maxPlayers || 4})
+                Lv.{g.level || 1} ({g.players.length}/{g.maxPlayers || 4})
               </span>
             </button>
           );
@@ -294,8 +334,10 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                   {activeGame.title}
                 </h2>
                 <p className="text-xs text-[var(--fg-secondary)]">
-                  Host: <strong className="text-[var(--fg-primary)]">{activeGame.hostName}</strong> ({activeGame.hostUid}) · Status:{' '}
-                  <span className="capitalize font-medium text-[var(--accent-secondary)]">{activeGame.status}</span>
+                  Host: <strong className="text-[var(--fg-primary)]">{activeGame.hostName}</strong> ·{' '}
+                  <strong className="text-[var(--fg-primary)]">{activeGame.difficultyLabel || `Level ${activeGame.level || 1}`}</strong>{' '}
+                  ({activeGame.levelTitle || 'Standard'}) ·{' '}
+                  <span className="capitalize font-medium text-[var(--accent-primary)]">{activeGame.status}</span>
                 </p>
               </div>
 
@@ -311,7 +353,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                   </button>
                 )}
                 {isPending && (
-                  <span className="inline-flex h-10 items-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 text-xs font-medium text-amber-500">
+                  <span className="inline-flex h-10 items-center rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 text-xs font-medium text-amber-700 dark:text-amber-300">
                     {t('requestPending')}
                   </span>
                 )}
@@ -320,11 +362,17 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                     <button
                       type="button"
                       onClick={() => sendWsEvent('game:add_bot', { roomId: activeGame.roomId })}
-                      disabled={activeGame.gameType !== 'fps' && activeGame.players.length >= (activeGame.maxPlayers || 4)}
+                      disabled={activeGame.players.length >= (activeGame.maxPlayers || 4)}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3 text-xs font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] disabled:opacity-40 cursor-pointer"
                     >
                       <Bot className="h-4 w-4" />
-                      <span>{activeGame.gameType === 'fps' ? 'Add Drone Bot' : t('addBot')}</span>
+                      <span>
+                        {activeGame.gameType === 'fps'
+                          ? 'Add Drone'
+                          : activeGame.gameType === 'rpg'
+                            ? 'Add AI Hero'
+                            : t('addBot')}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -339,31 +387,85 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
               </div>
             </div>
 
+            {/* Multi-Level Difficulty Selector Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-[var(--fg-secondary)]">
+                {activeGame.gameType === 'rpg' ? 'Dungeon Floor' : 'Progressive Level'}:{' '}
+                <strong className="text-[var(--fg-primary)]">{activeGame.levelTitle}</strong>
+              </span>
+              <div className="flex items-center gap-1 rounded-lg bg-[var(--bg-elevated)] p-1">
+                {Array.from({ length: activeGame.maxLevel || 3 }, (_, i) => i + 1).map((lvl) => {
+                  const selected = (activeGame.level || 1) === lvl;
+                  const canClick = canApprove || (isSeated && activeGame.status === 'finished');
+                  return (
+                    <button
+                      key={lvl}
+                      type="button"
+                      disabled={!canClick}
+                      onClick={() => sendWsEvent('game:set_level', { roomId: activeGame.roomId, level: lvl })}
+                      title={canClick ? `Switch to Level ${lvl}` : 'Host controls level selection'}
+                      className={`h-7 rounded-md px-2.5 text-xs font-mono-nums font-semibold transition-colors ${
+                        selected
+                          ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                          : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                      } ${canClick ? 'cursor-pointer' : 'cursor-default opacity-80'}`}
+                    >
+                      {activeGame.gameType === 'rpg' ? `F${lvl}` : `L${lvl}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Winner Banner */}
-            {activeGame.winnerName && (
-              <div className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
+            {activeGame.winnerName && activeGame.gameType !== 'rpg' && (
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-400">
                 <span className="inline-flex items-center gap-2">
                   <Crown className="h-5 w-5" />
-                  {activeGame.winnerName} won this match!
+                  {activeGame.winnerName} won {activeGame.levelTitle}!
                 </span>
-                {canApprove && (
-                  <button
-                    type="button"
-                    onClick={() => sendWsEvent('game:restart', { roomId: activeGame.roomId })}
-                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
-                  >
-                    Play Again
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {(canApprove || isSeated) && (activeGame.level || 1) < (activeGame.maxLevel || 3) && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        sendWsEvent('game:set_level', {
+                          roomId: activeGame.roomId,
+                          level: (activeGame.level || 1) + 1,
+                        })
+                      }
+                      className="rounded-lg bg-[var(--accent-primary)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-contrast)] cursor-pointer"
+                    >
+                      Next Level ({(activeGame.level || 1) + 1})
+                    </button>
+                  )}
+                  {canApprove && (
+                    <button
+                      type="button"
+                      onClick={() => sendWsEvent('game:restart', { roomId: activeGame.roomId })}
+                      className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      Play Again
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* 3D FIRST-PERSON SHOOTER ARENA OR LUDO / SNAKES BOARDS */}
+            {/* ST STRIKE 3D FPS / REALM QUEST RPG / LUDO / SNAKES BOARDS */}
             {activeGame.gameType === 'fps' ? (
               <FpsArenaGame
                 game={activeGame}
                 isSeated={isSeated}
                 isPending={isPending}
+                onRequestJoin={handleRequestJoin}
+              />
+            ) : activeGame.gameType === 'rpg' ? (
+              <RpgDungeonGame
+                game={activeGame}
+                isSeated={isSeated}
+                isPending={isPending}
+                canApprove={canApprove}
                 onRequestJoin={handleRequestJoin}
               />
             ) : activeGame.gameType === 'ludo' ? (
@@ -476,7 +578,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                   preserveAspectRatio="none"
                   className="pointer-events-none absolute inset-0 h-full w-full"
                 >
-                  {LADDERS.map(([from, to]) => {
+                  {activeLaddersPairs.map(([from, to]) => {
                     const a = snakesSquareToPercent(from);
                     const b = snakesSquareToPercent(to);
                     return (
@@ -486,7 +588,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                       </g>
                     );
                   })}
-                  {SNAKES.map(([head, tail]) => {
+                  {activeSnakesPairs.map(([head, tail]) => {
                     const a = snakesSquareToPercent(head);
                     const b = snakesSquareToPercent(tail);
                     const cx = (a.x + b.x) / 2 + (head % 2 === 0 ? 7 : -7);
@@ -532,7 +634,7 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
             )}
 
             {/* Turn & Dice Action Bar (Board Games Only) */}
-            {activeGame.gameType !== 'fps' && (
+            {activeGame.gameType !== 'fps' && activeGame.gameType !== 'rpg' && (
               <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-4 py-3">
                 <div className="space-y-0.5">
                   <div className="text-xs text-[var(--fg-secondary)]">
@@ -678,9 +780,11 @@ export const MultiplayerGamesHub: React.FC<MultiplayerGamesHubProps> = ({
                           <div className="text-[11px] font-mono-nums text-[var(--fg-muted)]">
                             {activeGame.gameType === 'fps'
                               ? `Kills: ${fpsUnit?.kills ?? 0} · Score: ${fpsUnit?.score ?? 0} · HP ${fpsUnit?.hp ?? 100}`
-                              : activeGame.gameType === 'ludo'
-                                ? `Home: ${p.tokens.filter((x) => x === 56).length}/4`
-                                : `Square ${p.tokens[0]}/100`}
+                              : activeGame.gameType === 'rpg'
+                                ? `Lv.${activeGame.rpg?.heroes?.[p.uid]?.heroLevel ?? 1} ${(activeGame.rpg?.heroes?.[p.uid]?.heroClass || 'hero').toUpperCase()} · HP ${activeGame.rpg?.heroes?.[p.uid]?.hp ?? 0}`
+                                : activeGame.gameType === 'ludo'
+                                  ? `Home: ${p.tokens.filter((x) => x === 56).length}/4`
+                                  : `Square ${p.tokens[0]}/100`}
                           </div>
                         </div>
                       </div>

@@ -2,18 +2,22 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
+  Copy,
   Download,
   Film,
   Gift,
   Image as ImageIcon,
+  LayoutGrid,
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  Upload,
   Video,
   X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import type { CapturedAsset } from '../types';
+import { CollageMakerModal } from './CollageMakerModal';
 
 interface LibraryViewProps {
   onOpenCamera: () => void;
@@ -41,6 +45,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
 
   const [category, setCategory] = useState<'all' | 'photo' | 'video'>('all');
   const [editingAsset, setEditingAsset] = useState<CapturedAsset | null>(null);
+  const [collageOpen, setCollageOpen] = useState<boolean>(false);
+  const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
 
   // Darkroom canvas editor state (G-053)
   const [lutId, setLutId] = useState<string>('none');
@@ -50,10 +56,90 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
   const [polaroidFrame, setPolaroidFrame] = useState<boolean>(false);
   const [polaroidCaption, setPolaroidCaption] = useState<string>('StreamLive Studio');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
+  const libraryPhotos = mediaLibrary.filter((a) => a.type === 'photo');
   const filtered = mediaLibrary.filter((item) =>
     category === 'all' ? true : item.type === category
   );
+
+  const handleImportMedia = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const createdAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (file.type.startsWith('video/')) {
+      const url = URL.createObjectURL(file);
+      addMediaAsset({
+        id: `impv-${Date.now()}`,
+        type: 'video',
+        url,
+        label: file.name.slice(0, 40) || 'Imported Clip',
+        createdAt,
+      });
+      pushToast('Imported video clip into Studio Library.', 'success');
+      return;
+    }
+
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1280;
+          const scale = Math.min(1, maxDim / Math.max(1, img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.width * scale));
+          c.height = Math.max(1, Math.round(img.height * scale));
+          const ctx = c.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          const dataUrl = c.toDataURL('image/jpeg', 0.88);
+          addMediaAsset({
+            id: `impp-${Date.now()}`,
+            type: 'photo',
+            url: dataUrl,
+            label: file.name.slice(0, 40) || 'Imported Photo',
+            createdAt,
+          });
+          pushToast('Imported photo (optimized ≤1280px) to Studio Library.', 'success');
+        };
+        if (typeof reader.result === 'string') img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCopyShareToken = (item: CapturedAsset) => {
+    const token = `[${item.type === 'video' ? 'clip' : 'photo'}:${item.id}]`;
+    navigator.clipboard?.writeText(token).catch(() => {});
+    setCopiedTokenId(item.id);
+    pushToast(`Copied ${token} — paste in Live Chat or Inbox DM!`, 'success');
+    setTimeout(() => setCopiedTokenId((curr) => (curr === item.id ? null : curr)), 2000);
+  };
+
+  const handleSaveCollage = (dataUrl: string, presetLabel: string) => {
+    addMediaAsset({
+      id: `col-${Date.now()}`,
+      type: 'photo',
+      url: dataUrl,
+      label: `Collage · ${presetLabel}`,
+      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+    pushToast(`Saved "${presetLabel}" collage to Studio Library.`, 'success');
+    setCollageOpen(false);
+  };
+
+  const handleExportLocal = (dataUrl: string, filename: string) => {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    pushToast(`Exported ${filename}`, 'success');
+  };
 
   const openDarkroom = (asset: CapturedAsset) => {
     setEditingAsset(asset);
@@ -132,6 +218,32 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="image/*,video/*"
+            onChange={handleImportMedia}
+            className="hidden"
+          />
+
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+          >
+            <Upload className="h-4 w-4 text-[var(--accent-secondary)]" />
+            <span>Import</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCollageOpen(true)}
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+          >
+            <LayoutGrid className="h-4 w-4 text-[var(--accent-primary)]" />
+            <span>Collage</span>
+          </button>
+
           <button
             type="button"
             onClick={claimDailyCheckIn}
@@ -243,6 +355,19 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleCopyShareToken(item)}
+                    aria-label="Copy Chat/DM Token"
+                    title="Copy [photo:]/[clip:] token for Live Chat or Inbox DM"
+                    className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-hairline)] text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+                  >
+                    {copiedTokenId === item.id ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-700 dark:text-emerald-400" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                  </button>
                   {item.type === 'photo' && (
                     <button
                       type="button"
@@ -408,6 +533,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           </div>
         </div>
       )}
+      <CollageMakerModal
+        open={collageOpen}
+        onClose={() => setCollageOpen(false)}
+        libraryPhotos={libraryPhotos}
+        onSaveCollage={handleSaveCollage}
+        onExportLocal={handleExportLocal}
+      />
     </main>
   );
 };
