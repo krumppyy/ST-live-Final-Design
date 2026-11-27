@@ -25,12 +25,17 @@ import {
   priceAfterDiscount,
 } from './security';
 import type {
+  AadsStatus,
   AuditLogEntry,
   AuthSession,
+  BannerPlacement,
+  BannerSize,
   DirectoryUser,
+  HostDailyTask,
   Livestream,
   PasswordResetRecord,
   PayoutRecord,
+  PublicUserProfile,
   RoomVisitor,
   SafetyAppeal,
   SafetyReport,
@@ -88,6 +93,29 @@ export function initPlatformStore(): void {
   addColIfMissing('users', 'ban_strikes', 'INTEGER NOT NULL DEFAULT 0');
   addColIfMissing('users', 'pw_stretched', 'INTEGER NOT NULL DEFAULT 0');
   addColIfMissing('users', 'last_payout_at', 'INTEGER NOT NULL DEFAULT 0');
+  // Rich Creator Biodata/CV, Avatars/Covers, Visibility Toggles & A-ADS Partner Integration
+  addColIfMissing('users', 'avatar_url', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'cover_url', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'headline', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'location', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'languages', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'skills', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'schedule', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'website_url', "TEXT NOT NULL DEFAULT ''");
+  addColIfMissing('users', 'show_bio', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_location', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_languages', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_skills', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_schedule', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_hobbies', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'show_website', 'INTEGER NOT NULL DEFAULT 1');
+  addColIfMissing('users', 'aads_status', "TEXT NOT NULL DEFAULT 'none'");
+  addColIfMissing('users', 'aads_email', 'TEXT');
+  addColIfMissing('users', 'aads_unit_id', 'TEXT');
+  addColIfMissing('users', 'aads_banner_pos', "TEXT NOT NULL DEFAULT 'below_stage'");
+  addColIfMissing('users', 'aads_banner_size', "TEXT NOT NULL DEFAULT '728x90'");
+  addColIfMissing('users', 'monetag_checklist_at', 'INTEGER NOT NULL DEFAULT 0');
+  addColIfMissing('users', 'aads_checklist_at', 'INTEGER NOT NULL DEFAULT 0');
 
   // 2. Additive columns on streams
   addColIfMissing('streams', 'country_code', "TEXT NOT NULL DEFAULT 'US'");
@@ -201,6 +229,16 @@ export function initPlatformStore(): void {
       coins INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS host_daily_tasks (
+      uid TEXT NOT NULL,
+      task_date TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0,
+      claimed INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (uid, task_date, task_id)
+    );
   `);
 
   // 4. Backfill numeric #IDs, countries, verified badges & stream countries on existing seeds
@@ -260,6 +298,99 @@ export function initPlatformStore(): void {
       `INSERT OR IGNORE INTO users (uid, display_name, role, password_hash, coins, diamonds, tokens, xp, verified, country_code, numeric_id, vip_tier, vip_until)
        VALUES ('ST-STAFF', 'Safety Desk', 'staff', NULL, 50000, 0, 500, 15000, 1, 'US', 100001, 'lifetime', ?)`
     ).run(Date.now() + 100 * 365 * 24 * 3600 * 1000);
+  }
+
+  // Seed default host avatars, cover banners & rich creator biodata/CV on showcase accounts (only if empty)
+  const profileSeeds: Array<{
+    uid: string;
+    avatar: string;
+    cover: string;
+    headline: string;
+    bio: string;
+    location: string;
+    languages: string;
+    skills: string;
+    schedule: string;
+  }> = [
+    {
+      uid: 'ST-1001',
+      avatar: '/src/assets/images/stream_solo_studio_1795687719501.jpg',
+      cover: '/src/assets/images/stream_solo_studio_1795687719501.jpg',
+      headline: 'Live Cinema Host & Color Grading Mentor',
+      bio: 'Daily studio Q&As, LUT breakdowns, live Ludo matches, and creator monetization coaching.',
+      location: 'Los Angeles, USA',
+      languages: 'English, Mandarin',
+      skills: 'Color Grading, Live Q&A, Dual Camera, Ludo Pro',
+      schedule: 'Mon–Sat · 10:00 AM PST',
+    },
+    {
+      uid: 'ST-1002',
+      avatar: '/src/assets/images/stream_multiguest_podcast_1795687722768.jpg',
+      cover: '/src/assets/images/stream_multiguest_podcast_1795687722768.jpg',
+      headline: 'Multi-Guest Podcast Producer & Audio Engineer',
+      bio: 'Hosting creator panels, ANC audio workshops, and live roundtable interviews.',
+      location: 'Toronto, Canada',
+      languages: 'English, French',
+      skills: 'Podcasting, Audio Mixing, Panel Hosting, Co-Host',
+      schedule: 'Tue–Sun · 6:00 PM EST',
+    },
+    {
+      uid: 'ST-1003',
+      avatar: '/src/assets/images/stream_gaming_arena_1795687722196.jpg',
+      cover: '/src/assets/images/stream_gaming_arena_1795687722196.jpg',
+      headline: 'ST Strike 3D & Co-Op RPG Live Champion',
+      bio: 'Interactive viewer game lobbies, 5-floor Realm Quest dungeon runs, and esports shoutcasting.',
+      location: 'Bengaluru, India',
+      languages: 'English, Hindi',
+      skills: 'ST Strike 3D, Realm RPG, Tactics, Speedruns',
+      schedule: 'Daily · 8:00 PM IST',
+    },
+    {
+      uid: 'ST-4001',
+      avatar: '/src/assets/images/stream_band_live_1795687720929.jpg',
+      cover: '/src/assets/images/stream_band_live_1795687720929.jpg',
+      headline: 'Indie Synth & Acoustic Live Band',
+      bio: 'Full-band rehearsal streams, multi-cam live concerts, and exclusive backstage merch drops.',
+      location: 'London, UK',
+      languages: 'English',
+      skills: 'Live Music, Synth, Vocals, Multi-Cam Stage',
+      schedule: 'Fri–Sun · 9:00 PM GMT',
+    },
+    {
+      uid: 'ST-3001',
+      avatar: '/src/assets/images/stream_brand_showcase_1795687724180.jpg',
+      cover: '/src/assets/images/stream_brand_showcase_1795687724180.jpg',
+      headline: 'Creator Talent & Brand Partnerships',
+      bio: 'Managing top live hosts, agency recruitment, and sponsor campaigns worldwide.',
+      location: 'London, UK',
+      languages: 'English, German, Spanish',
+      skills: 'Talent Management, Sponsorships, Growth Strategy',
+      schedule: 'Mon–Fri · 9:00 AM GMT',
+    },
+  ];
+  for (const seed of profileSeeds) {
+    db.prepare(
+      `UPDATE users
+       SET avatar_url = CASE WHEN avatar_url = '' THEN ? ELSE avatar_url END,
+           cover_url = CASE WHEN cover_url = '' THEN ? ELSE cover_url END,
+           headline = CASE WHEN headline = '' THEN ? ELSE headline END,
+           bio = CASE WHEN bio = '' THEN ? ELSE bio END,
+           location = CASE WHEN location = '' THEN ? ELSE location END,
+           languages = CASE WHEN languages = '' THEN ? ELSE languages END,
+           skills = CASE WHEN skills = '' THEN ? ELSE skills END,
+           schedule = CASE WHEN schedule = '' THEN ? ELSE schedule END
+       WHERE uid = ?`
+    ).run(
+      seed.avatar,
+      seed.cover,
+      seed.headline,
+      seed.bio,
+      seed.location,
+      seed.languages,
+      seed.skills,
+      seed.schedule,
+      seed.uid
+    );
   }
 }
 
@@ -341,6 +472,10 @@ export function hydrateAuthSession(
     ownedPerks = [];
   }
 
+  const monetagVerified = u.monetag_status === 'verified';
+  const aadsVerified = u.aads_status === 'verified';
+  const partnerVerified = monetagVerified || aadsVerified;
+
   const base: AuthSession = {
     token,
     uid: u.uid,
@@ -358,25 +493,56 @@ export function hydrateAuthSession(
     vipTier: (vipActive ? u.vip_tier || 'monthly' : 'none') as VipTier,
     vipUntil: vipActive ? Number(u.vip_until || 0) : 0,
     isPro: Boolean(u.is_pro),
-    verified: Boolean(u.verified),
+    verified: Boolean(u.verified) || partnerVerified,
+    partnerVerified,
     freePinTrials: Number(u.free_pin_trials ?? 3),
     dailyStreak: Number(u.daily_streak || 0),
     checkedInToday: u.last_checkin_date === todayKey(),
     totpEnabled: Boolean(u.totp_enabled),
     ownedPerks,
     monetagStatus: (u.monetag_status || 'none') as AuthSession['monetagStatus'],
+    monetagEmail: u.monetag_email || undefined,
+    monetagPublisherId: u.monetag_pub_id || undefined,
     monetagTipUrl: u.monetag_tip_url || undefined,
+    aadsStatus: (u.aads_status || 'none') as AadsStatus,
+    aadsEmail: u.aads_email || undefined,
+    aadsUnitId: u.aads_unit_id || undefined,
+    aadsBannerPos: (['top', 'lower', 'corner', 'below_stage'].includes(u.aads_banner_pos)
+      ? u.aads_banner_pos
+      : 'below_stage') as BannerPlacement,
+    aadsBannerSize: (['728x90', '468x60', '300x250', '320x50'].includes(u.aads_banner_size)
+      ? u.aads_banner_size
+      : '728x90') as BannerSize,
+    avatarUrl: u.avatar_url || undefined,
+    coverUrl: u.cover_url || undefined,
+    headline: u.headline || '',
+    location: u.location || '',
+    languages: u.languages || '',
+    skills: u.skills || '',
+    schedule: u.schedule || '',
+    websiteUrl: u.website_url || '',
     bio: u.bio || '',
     age: u.age || '',
     gender: u.gender || '',
     hobbies: u.hobbies || '',
+    showBio: u.show_bio !== 0,
     showAge: Boolean(u.show_age),
     showGender: Boolean(u.show_gender),
+    showLocation: u.show_location !== 0,
+    showLanguages: u.show_languages !== 0,
+    showSkills: u.show_skills !== 0,
+    showSchedule: u.show_schedule !== 0,
+    showHobbies: u.show_hobbies !== 0,
+    showWebsite: u.show_website !== 0,
     showFollowers: u.show_followers !== 0,
     showVisits: u.show_visits !== 0,
     allowDm: u.allow_dm !== 0,
-    bannerPos: (u.banner_pos || 'lower') as AuthSession['bannerPos'],
-    bannerSize: (u.banner_size || '728x90') as AuthSession['bannerSize'],
+    bannerPos: (['top', 'lower', 'corner', 'below_stage'].includes(u.banner_pos)
+      ? u.banner_pos
+      : 'below_stage') as BannerPlacement,
+    bannerSize: (['728x90', '468x60', '300x250', '320x50'].includes(u.banner_size)
+      ? u.banner_size
+      : '728x90') as BannerSize,
     bannedUntil: Number(u.banned_until || 0),
     banStrikes: Number(u.ban_strikes || 0),
     isTestMode: Boolean(isTestMode),
@@ -399,7 +565,12 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
               s.viewer_count, s.thumbnail, s.is_live, s.max_seats, s.game_room_id, s.game_type,
               s.is_locked, s.consent_verified, s.created_at, s.total_gifts_coins,
               u.numeric_id as host_numeric_id, u.verified as host_verified,
+              u.avatar_url as host_avatar_url,
+              CASE WHEN u.monetag_status = 'verified' OR u.aads_status = 'verified' THEN 1 ELSE 0 END as host_partner_verified,
               CASE WHEN u.monetag_status = 'verified' THEN u.monetag_tip_url ELSE NULL END as host_tip_url,
+              CASE WHEN u.aads_status = 'verified' THEN u.aads_unit_id ELSE NULL END as host_aads_unit_id,
+              u.aads_banner_pos as host_aads_banner_pos,
+              u.aads_banner_size as host_aads_banner_size,
               (SELECT COUNT(*) FROM follows f WHERE f.host_uid = s.host_uid) as follower_count
        FROM streams s
        LEFT JOIN users u ON u.uid = s.host_uid
@@ -413,8 +584,17 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
     hostUid: r.host_uid,
     hostNumericId: Number(r.host_numeric_id || 100100),
     hostName: r.host_name,
-    hostVerified: Boolean(r.host_verified),
+    hostAvatarUrl: r.host_avatar_url || undefined,
+    hostVerified: Boolean(r.host_verified) || Boolean(r.host_partner_verified),
+    hostPartnerVerified: Boolean(r.host_partner_verified),
     hostMonetagTipUrl: r.host_tip_url || undefined,
+    hostAadsUnitId: r.host_aads_unit_id || undefined,
+    hostAadsBannerPos: (['top', 'lower', 'corner', 'below_stage'].includes(r.host_aads_banner_pos)
+      ? r.host_aads_banner_pos
+      : 'below_stage') as BannerPlacement,
+    hostAadsBannerSize: (['728x90', '468x60', '300x250', '320x50'].includes(r.host_aads_banner_size)
+      ? r.host_aads_banner_size
+      : '728x90') as BannerSize,
     countryCode: r.country_code || 'US',
     title: r.title,
     category: r.category,
@@ -435,7 +615,9 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
 
 export function listExtendedDirectoryUsers(): DirectoryUser[] {
   const rows = db
-    .prepare('SELECT uid, numeric_id, display_name, role, country_code, verified FROM users ORDER BY created_at DESC LIMIT 80')
+    .prepare(
+      'SELECT uid, numeric_id, display_name, role, country_code, verified, avatar_url FROM users ORDER BY created_at DESC LIMIT 80'
+    )
     .all() as Array<Record<string, any>>;
   return rows.map((r) => ({
     uid: r.uid,
@@ -444,7 +626,251 @@ export function listExtendedDirectoryUsers(): DirectoryUser[] {
     role: r.role as UserRole,
     countryCode: r.country_code || 'US',
     verified: Boolean(r.verified),
+    avatarUrl: r.avatar_url || undefined,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Public Creator Biodata / CV Profile (Strictly Enforces User Visibility Toggles)
+// ---------------------------------------------------------------------------
+
+export function getPublicUserProfileDb(uid: string): PublicUserProfile | null {
+  const u = getFullUserRow(uid);
+  if (!u) return null;
+  const followerCount = (
+    db.prepare('SELECT COUNT(*) as c FROM follows WHERE host_uid = ?').get(uid) as { c: number }
+  ).c;
+  const liveStream = db
+    .prepare('SELECT id FROM streams WHERE host_uid = ? AND is_live = 1 ORDER BY viewer_count DESC LIMIT 1')
+    .get(uid) as { id: string } | undefined;
+
+  const monetagVerified = u.monetag_status === 'verified';
+  const aadsVerified = u.aads_status === 'verified';
+  const partnerVerified = monetagVerified || aadsVerified;
+
+  return {
+    uid: u.uid,
+    numericId: Number(u.numeric_id || 100100),
+    displayName: u.display_name,
+    role: u.role as UserRole,
+    countryCode: u.country_code || 'US',
+    level: levelFromXp(Number(u.xp || 0)),
+    xp: Number(u.xp || 0),
+    verified: Boolean(u.verified) || partnerVerified,
+    partnerVerified,
+    monetagVerified,
+    aadsVerified,
+    isVip: Number(u.vip_until || 0) > Date.now(),
+    isPro: Boolean(u.is_pro),
+    avatarUrl: u.avatar_url || undefined,
+    coverUrl: u.cover_url || undefined,
+    headline: u.headline || undefined,
+    bio: u.show_bio !== 0 && u.bio ? u.bio : undefined,
+    age: u.show_age ? u.age || undefined : undefined,
+    gender: u.show_gender ? u.gender || undefined : undefined,
+    location: u.show_location !== 0 && u.location ? u.location : undefined,
+    languages: u.show_languages !== 0 && u.languages ? u.languages : undefined,
+    skills: u.show_skills !== 0 && u.skills ? u.skills : undefined,
+    schedule: u.show_schedule !== 0 && u.schedule ? u.schedule : undefined,
+    hobbies: u.show_hobbies !== 0 && u.hobbies ? u.hobbies : undefined,
+    websiteUrl: u.show_website !== 0 && u.website_url ? u.website_url : undefined,
+    followerCount: u.show_followers !== 0 ? followerCount : undefined,
+    allowDm: u.allow_dm !== 0,
+    liveStreamId: liveStream?.id,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Daily Host Tasks Engine (Progressive XP + Coins + Tokens Rewards)
+// ---------------------------------------------------------------------------
+
+interface DailyTaskDef {
+  id: string;
+  title: string;
+  description: string;
+  category: HostDailyTask['category'];
+  target: number;
+  rewardXp: number;
+  rewardCoins: number;
+  rewardTokens: number;
+}
+
+const DAILY_TASK_DEFS: DailyTaskDef[] = [
+  {
+    id: 'daily_checkin',
+    title: 'Daily Host Check-In',
+    description: 'Claim your daily check-in streak bonus to keep your creator momentum active.',
+    category: 'community',
+    target: 1,
+    rewardXp: 45,
+    rewardCoins: 150,
+    rewardTokens: 10,
+  },
+  {
+    id: 'polish_profile',
+    title: 'Update Creator Biodata / Avatar',
+    description: 'Set your profile picture, cover banner, or public biodata/CV details.',
+    category: 'profile',
+    target: 1,
+    rewardXp: 65,
+    rewardCoins: 200,
+    rewardTokens: 12,
+  },
+  {
+    id: 'go_live_session',
+    title: 'Go Live or Host a Room',
+    description: 'Launch a livestream broadcast from Studio or Camera to engage your audience.',
+    category: 'stream',
+    target: 1,
+    rewardXp: 120,
+    rewardCoins: 350,
+    rewardTokens: 20,
+  },
+  {
+    id: 'engage_chat',
+    title: 'Engage Audience in Chat',
+    description: 'Send 3 live room chat messages to welcome viewers and boost watch time.',
+    category: 'community',
+    target: 3,
+    rewardXp: 80,
+    rewardCoins: 220,
+    rewardTokens: 14,
+  },
+  {
+    id: 'host_live_game',
+    title: 'Launch an Interactive Live Game',
+    description: 'Start ST Strike 3D, Realm Quest RPG, Ludo, or Snakes inside a live broadcast.',
+    category: 'game',
+    target: 1,
+    rewardXp: 110,
+    rewardCoins: 300,
+    rewardTokens: 18,
+  },
+  {
+    id: 'partner_setup',
+    title: 'Activate Free-to-Earn Setup',
+    description: 'Connect Monetag Free Tip or A-ADS custom banner placement for verified earning.',
+    category: 'monetize',
+    target: 1,
+    rewardXp: 150,
+    rewardCoins: 400,
+    rewardTokens: 25,
+  },
+];
+
+export function incrementHostDailyTaskDb(uid: string, taskId: string, delta = 1): void {
+  const def = DAILY_TASK_DEFS.find((t) => t.id === taskId);
+  if (!def || !uid) return;
+  const dateKey = todayKey();
+  const safeDelta = Math.max(1, Math.min(10, Math.floor(delta)));
+  db.prepare(
+    `INSERT INTO host_daily_tasks (uid, task_date, task_id, progress, claimed, updated_at)
+     VALUES (?, ?, ?, MIN(?, ?), 0, ?)
+     ON CONFLICT(uid, task_date, task_id) DO UPDATE SET
+       progress = MIN(?, host_daily_tasks.progress + ?),
+       updated_at = excluded.updated_at`
+  ).run(uid, dateKey, taskId, def.target, safeDelta, Date.now(), def.target, safeDelta);
+}
+
+export function getHostDailyTasksDb(uid: string): HostDailyTask[] {
+  const dateKey = todayKey();
+  const u = getFullUserRow(uid);
+  const rows = db
+    .prepare('SELECT task_id, progress, claimed FROM host_daily_tasks WHERE uid = ? AND task_date = ?')
+    .all(uid, dateKey) as Array<{ task_id: string; progress: number; claimed: number }>;
+  const map = new Map(rows.map((r) => [r.task_id, r]));
+
+  return DAILY_TASK_DEFS.map((def) => {
+    const rec = map.get(def.id);
+    let progress = rec ? Number(rec.progress || 0) : 0;
+
+    // Auto-derive live progress from user's verified account state so tasks feel alive immediately
+    if (def.id === 'daily_checkin' && u?.last_checkin_date === dateKey) {
+      progress = Math.max(progress, 1);
+    }
+    if (def.id === 'polish_profile' && u && (u.avatar_url || u.headline || u.bio)) {
+      progress = Math.max(progress, 1);
+    }
+    if (
+      def.id === 'partner_setup' &&
+      u &&
+      (u.monetag_status === 'pending' ||
+        u.monetag_status === 'verified' ||
+        u.aads_status === 'pending' ||
+        u.aads_status === 'verified')
+    ) {
+      progress = Math.max(progress, 1);
+    }
+
+    const clamped = Math.min(def.target, progress);
+    return {
+      id: def.id,
+      title: def.title,
+      description: def.description,
+      category: def.category,
+      target: def.target,
+      progress: clamped,
+      completed: clamped >= def.target,
+      claimed: Boolean(rec?.claimed),
+      rewardXp: def.rewardXp,
+      rewardCoins: def.rewardCoins,
+      rewardTokens: def.rewardTokens,
+    };
+  });
+}
+
+export function claimHostDailyTaskDb(
+  uid: string,
+  taskId: string
+): {
+  ok: boolean;
+  error?: string;
+  rewardXp?: number;
+  rewardCoins?: number;
+  rewardTokens?: number;
+  tasks?: HostDailyTask[];
+} {
+  const tasks = getHostDailyTasksDb(uid);
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return { ok: false, error: 'Unknown daily task.' };
+  if (task.claimed) return { ok: false, error: 'This daily task reward has already been claimed today.' };
+  if (!task.completed) return { ok: false, error: `Complete this task first (${task.progress}/${task.target}).` };
+
+  const dateKey = todayKey();
+  const coinsToMint = LIVE_MONEY_ENABLED ? 0 : task.rewardCoins;
+  if (coinsToMint > 0) {
+    const mint = checkAndReserveMint(uid, coinsToMint, `daily_task:${task.id}`);
+    if (!mint.ok) return { ok: false, error: mint.error };
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO host_daily_tasks (uid, task_date, task_id, progress, claimed, updated_at)
+       VALUES (?, ?, ?, ?, 1, ?)
+       ON CONFLICT(uid, task_date, task_id) DO UPDATE SET
+         progress = MAX(host_daily_tasks.progress, excluded.progress),
+         claimed = 1,
+         updated_at = excluded.updated_at`
+    ).run(uid, dateKey, task.id, task.target, Date.now());
+
+    db.prepare(
+      `UPDATE users
+       SET xp = xp + ?,
+           coins = MIN(?, coins + ?),
+           tokens = MIN(?, tokens + ?)
+       WHERE uid = ?`
+    ).run(task.rewardXp, MAX_BALANCE_CAP, coinsToMint, MAX_BALANCE_CAP, task.rewardTokens, uid);
+  });
+  tx();
+
+  writeAuditLog(uid, 'daily_task_claim', task.id, `+${task.rewardXp}XP +${coinsToMint}c +${task.rewardTokens}t`);
+  return {
+    ok: true,
+    rewardXp: task.rewardXp,
+    rewardCoins: coinsToMint,
+    rewardTokens: task.rewardTokens,
+    tasks: getHostDailyTasksDb(uid),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1163,7 +1589,13 @@ export function switchTestPersonaDb(
     db.prepare(
       `UPDATE users SET coins = MAX(coins, 25000), diamonds = MAX(diamonds, 18400), tokens = MAX(tokens, 260),
        xp = MAX(xp, 12500), vip_tier = 'monthly', vip_until = ?, is_pro = 1, verified = 1,
-       monetag_status = 'verified', monetag_tip_url = 'https://streamlive.app/tip/maya-lin'
+       monetag_status = 'verified',
+       monetag_email = COALESCE(monetag_email, 'maya.partner@monetag.demo'),
+       monetag_pub_id = COALESCE(monetag_pub_id, 'PUB-202688'),
+       monetag_tip_url = COALESCE(monetag_tip_url, 'https://monetag.com/?ref_id=t20f'),
+       aads_status = CASE WHEN aads_status = 'none' THEN 'verified' ELSE aads_status END,
+       aads_email = COALESCE(aads_email, 'maya.ads@aads.demo'),
+       aads_unit_id = COALESCE(aads_unit_id, '2345678')
        WHERE uid = ?`
     ).run(oneYear, uid);
     const token = signSessionToken({ uid, role: 'host' });

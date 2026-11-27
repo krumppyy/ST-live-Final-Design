@@ -5,10 +5,11 @@ import { InboxHub } from './components/InboxHub';
 import { LibraryView } from './components/LibraryView';
 import { LiveHome } from './components/LiveHome';
 import { LiveRoomView } from './components/LiveRoomView';
-import { MeHub } from './components/MeHub';
+import { MeHub, type MeTab } from './components/MeHub';
 import { MultiplayerGamesHub } from './components/MultiplayerGamesHub';
 import { Navbar, type ActiveTab } from './components/Navbar';
 import { PreferencesSheet } from './components/PreferencesSheet';
+import { PublicProfileModal } from './components/PublicProfileModal';
 import { RoleWorkspace } from './components/RoleWorkspace';
 import { TestModeDrawer } from './components/TestModeDrawer';
 import { UnifiedLoginModal } from './components/UnifiedLoginModal';
@@ -63,6 +64,8 @@ const StreamLiveShell: React.FC = () => {
   const [loginOpen, setLoginOpen] = useState(false);
   const [testModeOpen, setTestModeOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
+  const [profileModalUid, setProfileModalUid] = useState<string | null>(null);
+  const [meInitialSubTab, setMeInitialSubTab] = useState<MeTab | null>(null);
   const deepLinkAppliedRef = useRef(false);
 
   // Draggable Floating PiP Position & Mute Toggle
@@ -74,14 +77,15 @@ const StreamLiveShell: React.FC = () => {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (loginOpen) setLoginOpen(false);
+        if (profileModalUid) setProfileModalUid(null);
+        else if (loginOpen) setLoginOpen(false);
         else if (testModeOpen) setTestModeOpen(false);
         else if (prefsOpen) setPrefsOpen(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [loginOpen, testModeOpen, prefsOpen]);
+  }, [profileModalUid, loginOpen, testModeOpen, prefsOpen]);
 
   // Resolve directly shared links (?room=<id>, ?live=cam, or ?joinGroup=<code>)
   useEffect(() => {
@@ -141,6 +145,11 @@ const StreamLiveShell: React.FC = () => {
           onSelectTab={handleSelectTab}
           onOpenLogin={() => setLoginOpen(true)}
           onOpenTestMode={() => setTestModeOpen(true)}
+          onOpenFreeToEarn={() => {
+            setActiveStream(null);
+            setMeInitialSubTab('earning');
+            setActiveTab('me');
+          }}
           onOpenPreferences={() => setPrefsOpen(true)}
         />
       )}
@@ -159,10 +168,14 @@ const StreamLiveShell: React.FC = () => {
                 setActiveStream(null);
                 setActiveTab('inbox');
               }}
+              onViewProfile={(uid) => setProfileModalUid(uid)}
               onRequireLogin={() => setLoginOpen(true)}
             />
           ) : (
-            <LiveHome onSelectStream={handleOpenStream} />
+            <LiveHome
+              onSelectStream={handleOpenStream}
+              onViewProfile={(uid) => setProfileModalUid(uid)}
+            />
           ))}
 
         {activeTab === 'games' && (
@@ -206,8 +219,11 @@ const StreamLiveShell: React.FC = () => {
 
         {activeTab === 'me' && (
           <MeHub
+            initialSubTab={meInitialSubTab}
+            onConsumeSubTab={() => setMeInitialSubTab(null)}
             onOpenLogin={() => setLoginOpen(true)}
             onOpenTestMode={() => setTestModeOpen(true)}
+            onViewPublicProfile={(uid) => setProfileModalUid(uid)}
           />
         )}
       </div>
@@ -314,6 +330,22 @@ const StreamLiveShell: React.FC = () => {
       />
 
       <PreferencesSheet open={prefsOpen} onClose={() => setPrefsOpen(false)} />
+
+      <PublicProfileModal
+        uid={profileModalUid}
+        onClose={() => setProfileModalUid(null)}
+        onMessageUser={(uid) => {
+          setProfileModalUid(null);
+          setTargetDmUid(uid);
+          setActiveStream(null);
+          setActiveTab('inbox');
+        }}
+        onWatchStream={(stream) => {
+          setProfileModalUid(null);
+          handleOpenStream(stream);
+        }}
+        onRequireLogin={() => setLoginOpen(true)}
+      />
 
       {/* Live Toast Notifications */}
       {toasts.length > 0 && (

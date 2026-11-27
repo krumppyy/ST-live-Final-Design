@@ -1,10 +1,12 @@
 import React from 'react';
 import {
+  BadgeCheck,
   Camera,
   Compass,
   Film,
   FlaskConical,
   Gamepad2,
+  HandCoins,
   LayoutGrid,
   MessageCircle,
   SlidersHorizontal,
@@ -23,6 +25,7 @@ interface NavbarProps {
   onSelectTab: (tab: ActiveTab) => void;
   onOpenLogin: () => void;
   onOpenTestMode: () => void;
+  onOpenFreeToEarn?: () => void;
   onOpenPreferences: () => void;
 }
 
@@ -31,6 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTab,
   onOpenLogin,
   onOpenTestMode,
+  onOpenFreeToEarn,
   onOpenPreferences,
 }) => {
   const { session, streams, grade, mediaLibrary, t } = useApp();
@@ -98,6 +102,19 @@ export const Navbar: React.FC<NavbarProps> = ({
               <SlidersHorizontal className="h-4 w-4" />
             </button>
 
+            {/* Join Free to Earn Menu Trigger */}
+            {onOpenFreeToEarn && (
+              <button
+                type="button"
+                onClick={onOpenFreeToEarn}
+                title="Join Free to Earn (Monetag & A-ADS Creator Program)"
+                className="hidden sm:inline-flex h-8 md:h-9 items-center gap-1.5 rounded-lg border border-emerald-500/45 bg-emerald-500/12 px-2.5 md:px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <HandCoins className="h-3.5 w-3.5 shrink-0" />
+                <span>Free to Earn</span>
+              </button>
+            )}
+
             {/* Full Functional Test Mode Button (Beside Sign In) */}
             <button
               type="button"
@@ -105,11 +122,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               title="Open Full Functional Test Mode Sandbox"
               className={`flex h-8 md:h-9 items-center gap-1.5 rounded-lg border px-2.5 md:px-3 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                 session?.isTestMode
-                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
-                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)] hover:border-amber-500/60 hover:text-amber-400'
+                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25'
+                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)] hover:border-amber-500/60 hover:text-amber-600 dark:hover:text-amber-400'
               }`}
             >
-              <FlaskConical className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <FlaskConical className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0" />
               <span className="hidden xs:inline sm:inline">Test Mode</span>
             </button>
 
@@ -117,15 +134,35 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 type="button"
                 onClick={() => onSelectTab('me')}
-                title="Open Me Hub (Profile, Wallet, VIP, Payouts & Staff)"
-                className={`flex h-8 md:h-9 items-center gap-1.5 rounded-lg border px-2.5 md:px-3 text-xs font-medium text-[var(--fg-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer max-w-[230px] ${
+                title="Open Me Hub (Profile, Biodata, Daily Tasks, Free to Earn & Staff)"
+                className={`flex h-8 md:h-9 items-center gap-1.5 rounded-lg border px-2 md:px-2.5 text-xs font-medium text-[var(--fg-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer max-w-[240px] ${
                   activeTab === 'me'
                     ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/12'
                     : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]'
                 }`}
               >
-                <span className="text-sm leading-none shrink-0">{countryFlag(session.countryCode)}</span>
+                {session.avatarUrl ? (
+                  <img
+                    src={session.avatarUrl}
+                    alt={session.displayName}
+                    referrerPolicy="no-referrer"
+                    className="h-5 w-5 rounded-full object-cover ring-1 ring-[var(--border-hairline)] shrink-0"
+                  />
+                ) : (
+                  <span className="text-sm leading-none shrink-0">
+                    {countryFlag(session.countryCode)}
+                  </span>
+                )}
                 <span className="truncate font-semibold">{session.displayName}</span>
+                {(session.partnerVerified || session.verified) && (
+                  <BadgeCheck
+                    className={`h-3.5 w-3.5 shrink-0 ${
+                      session.partnerVerified
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-sky-500'
+                    }`}
+                  />
+                )}
                 <span className="hidden sm:inline font-mono-nums text-[11px] text-[var(--accent-gold)]">
                   {session.coins.toLocaleString()}c
                 </span>

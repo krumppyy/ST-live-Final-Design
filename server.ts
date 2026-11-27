@@ -40,7 +40,7 @@ import {
 } from './server/db';
 import { MultiplayerGameEngine } from './server/games';
 import { createPlatformRouter } from './server/platformRoutes';
-import { isBlockedByHost } from './server/platformStore';
+import { incrementHostDailyTaskDb, isBlockedByHost } from './server/platformStore';
 import { checkWsFlood, stripProtoPollution, threatScan } from './server/security';
 import type {
   AdminPermissions,
@@ -641,6 +641,10 @@ app.post('/api/streams', (req, res) => {
 
   const rt = getOrCreateRuntime(id, maxSeats, session.uid, session.displayName);
   rt.stageLayout = requestedStageLayout;
+  incrementHostDailyTaskDb(session.uid, 'go_live_session', 1);
+  if (gameType) {
+    incrementHostDailyTaskDb(session.uid, 'host_live_game', 1);
+  }
 
   const streams = hydrateStreams();
   broadcastAll('streams:updated', streams);
@@ -1450,6 +1454,7 @@ wss.on('connection', (ws, req) => {
       );
       const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
       rt.stageLayout = requestedLayout;
+      incrementHostDailyTaskDb(meta.session.uid, 'host_live_game', 1);
       broadcastAll('game:state', createdGame);
       broadcastAll('streams:updated', hydrateStreams());
       broadcastRoom(stream.id, 'room:state', buildRoomStatePayload(stream.id, rt));
@@ -1516,8 +1521,9 @@ wss.on('connection', (ws, req) => {
       const scanned = threatScan(rawText, meta.session.uid);
       const text = scanned.clean;
       if (!text) return;
-      // Grant +1 XP per chat message (G-016)
+      // Grant +1 XP per chat message (G-016) & track Daily Host Chat Task
       db.prepare('UPDATE users SET xp = xp + 1 WHERE uid = ?').run(meta.session.uid);
+      incrementHostDailyTaskDb(meta.session.uid, 'engage_chat', 1);
       const chat: ChatMessage = {
         id: crypto.randomUUID(),
         roomId,

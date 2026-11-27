@@ -22,6 +22,7 @@ import {
   Gift,
   Heart,
   Image as ImageIcon,
+  Info,
   Languages,
   Lock,
   Maximize2,
@@ -47,10 +48,17 @@ import {
 import { useApp } from '../context/AppContext';
 import { countryFlag } from '../lib/countries';
 import { useGimbal } from '../lib/gimbalEngine';
+import {
+  AADS_BANNER_SIZES,
+  buildSafeAadsIframeUrl,
+  VIEWER_AADS_GUIDELINE,
+  VIEWER_FREE_TIP_GUIDELINE,
+} from '../lib/monetization';
 import { fetchRtcConfig } from '../lib/rtcConfig';
 import { playDiceSfx, playStepSfx } from '../lib/sfx';
 import { parseStickerCode, STICKER_PACKS } from '../lib/stickers';
 import type {
+  BannerPlacement,
   ChatMessage,
   DiceDuelState,
   GameRoomState,
@@ -71,6 +79,7 @@ interface LiveRoomViewProps {
   onMinimizePip?: (stream: Livestream) => void;
   onOpenGame: (gameRoomId: string) => void;
   onMessageHost?: (hostUid: string) => void;
+  onViewProfile?: (uid: string) => void;
   onRequireLogin: () => void;
 }
 
@@ -133,6 +142,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   onMinimizePip,
   onOpenGame,
   onMessageHost,
+  onViewProfile,
   onRequireLogin,
 }) => {
   const {
@@ -210,6 +220,8 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [translateOn, setTranslateOn] = useState(autoTranslateChat);
   const [translations, setTranslations] = useState<Record<string, string>>({});
   const [nowTick, setNowTick] = useState(Date.now());
+  const [showTipGuide, setShowTipGuide] = useState(false);
+  const [showAadsGuide, setShowAadsGuide] = useState(false);
 
   const gimbal = useGimbal('off');
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -789,30 +801,85 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
             </button>
           )}
 
-          {liveStream.hostMonetagTipUrl && session?.uid !== liveStream.hostUid && (() => {
-            const tipSecLeft = Math.max(0, Math.ceil((tipCooldownUntil - nowTick) / 1000));
-            return tipSecLeft > 0 ? (
-              <span className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/12 px-2.5 text-xs font-mono-nums font-semibold text-emerald-700 dark:text-emerald-400">
-                <Check className="h-3.5 w-3.5" />
-                <span>Tipped ({tipSecLeft}s)</span>
-              </span>
-            ) : (
-              <a
-                href={liveStream.hostMonetagTipUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => {
-                  setTipCooldownUntil(Date.now() + 30_000);
-                  setNowTick(Date.now());
-                  pushToast(`Thanks for supporting ${liveStream.hostName} with a Free Tip!`, 'success');
-                }}
-                className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/40 bg-emerald-500/12 px-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/20"
+          {liveStream.hostMonetagTipUrl && (
+            session?.uid === liveStream.hostUid ? (
+              <span
+                title="Your Verified Free Tip button is live for viewers. Never click your own ad link."
+                className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"
               >
-                <ExternalLink className="h-3.5 w-3.5" />
-                <span>Free Tip</span>
-              </a>
-            );
-          })()}
+                <BadgeCheck className="h-3.5 w-3.5" />
+                <span>Free Tip Live</span>
+              </span>
+            ) : (() => {
+              const tipSecLeft = Math.max(0, Math.ceil((tipCooldownUntil - nowTick) / 1000));
+              return (
+                <div className="relative group inline-flex items-center gap-1">
+                  {tipSecLeft > 0 ? (
+                    <span className="inline-flex h-9 items-center gap-1 rounded-lg border border-emerald-500/35 bg-emerald-500/12 px-2.5 text-xs font-mono-nums font-semibold text-emerald-700 dark:text-emerald-300">
+                      <Check className="h-3.5 w-3.5" />
+                      <span>Tipped ({tipSecLeft}s)</span>
+                    </span>
+                  ) : (
+                    <a
+                      href={liveStream.hostMonetagTipUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => {
+                        setTipCooldownUntil(Date.now() + 30_000);
+                        setNowTick(Date.now());
+                        setShowTipGuide(false);
+                        pushToast(
+                          `Thanks for supporting ${liveStream.hostName}! Stay briefly in the partner tab if prompted so your free tip counts.`,
+                          'success'
+                        );
+                      }}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-500/15 px-3 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 transition-colors"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      <span>Free Tip</span>
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowTipGuide((v) => !v)}
+                    aria-label="How Free Tip works"
+                    title="How Free Tip supports this host"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-emerald-500/30 bg-[var(--bg-surface)] text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/15 cursor-pointer"
+                  >
+                    <Info className="h-3.5 w-3.5" />
+                  </button>
+
+                  {/* Viewer Mouse-Hover & Mobile Tap Guideline Card */}
+                  <div
+                    role="tooltip"
+                    className={`${
+                      showTipGuide ? 'block' : 'hidden group-hover:block'
+                    } absolute left-0 top-11 z-40 w-72 sm:w-80 rounded-xl border border-emerald-500/45 bg-[var(--bg-surface)] p-3 text-left shadow-2xl`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300">
+                        <BadgeCheck className="h-3.5 w-3.5" />
+                        <span>Free Tip · Viewer Support Guide</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowTipGuide(false)}
+                        className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer sm:hidden"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--fg-secondary)]">
+                      {VIEWER_FREE_TIP_GUIDELINE}
+                    </p>
+                    <p className="mt-1.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      100% free for viewers · Verified StreamLive Partner Link
+                    </p>
+                  </div>
+                </div>
+              );
+            })()
+          )}
         </div>
 
         {/* Right Action Cluster (Compact Popover Triggers) */}
@@ -1220,6 +1287,111 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
         <div className="w-full min-w-0 flex-1 space-y-5">
           {(() => {
             const effectiveLayout: LiveStageLayout = activeRoomGame ? stageLayout : 'video';
+            const aadsUnitId = liveStream.hostAadsUnitId || '';
+            const aadsPos: BannerPlacement = liveStream.hostAadsBannerPos || 'below_stage';
+            const aadsSize = liveStream.hostAadsBannerSize || '728x90';
+            const aadsMeta =
+              AADS_BANNER_SIZES.find((s) => s.id === aadsSize) || AADS_BANNER_SIZES[0];
+            const aadsUrl = aadsUnitId ? buildSafeAadsIframeUrl(aadsUnitId, aadsSize) : null;
+            const isSelfHost = session?.uid === liveStream.hostUid;
+
+            const renderAadsBanner = (slot: BannerPlacement, overlaid = false) => {
+              if (!aadsUrl || aadsPos !== slot) return null;
+              return (
+                <div
+                  className={
+                    overlaid
+                      ? slot === 'corner'
+                        ? 'absolute right-3 top-3 z-20 max-w-[230px] sm:max-w-[300px]'
+                        : 'absolute inset-x-3 bottom-20 z-20 flex justify-center'
+                      : 'w-full'
+                  }
+                >
+                  <div
+                    className={`relative group rounded-xl border border-amber-500/35 ${
+                      overlaid
+                        ? 'bg-black/82 backdrop-blur-md p-1.5 text-white'
+                        : 'bg-[var(--bg-surface)] px-3 py-2'
+                    } shadow-md`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span
+                        className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider ${
+                          overlaid ? 'text-amber-300' : 'text-amber-700 dark:text-amber-300'
+                        }`}
+                      >
+                        <BadgeCheck className="h-3 w-3" />
+                        <span>Verified Host Sponsor (A-ADS)</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAadsGuide((v) => !v)}
+                        aria-label="How Sponsor Banner supports this host"
+                        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
+                          overlaid
+                            ? 'bg-white/15 text-white hover:bg-white/25'
+                            : 'bg-[var(--bg-canvas)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                        }`}
+                      >
+                        <Info className="h-3 w-3" />
+                        <span>How it helps</span>
+                      </button>
+                    </div>
+
+                    {/* Hover & Tap Viewer Support Guideline */}
+                    <div
+                      role="tooltip"
+                      className={`${
+                        showAadsGuide ? 'block' : 'hidden group-hover:block'
+                      } absolute right-0 bottom-full mb-2 z-40 w-72 sm:w-80 rounded-xl border border-amber-500/45 bg-[var(--bg-surface)] p-3 text-left text-[var(--fg-primary)] shadow-2xl`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                          <BadgeCheck className="h-3.5 w-3.5" />
+                          <span>Verified Sponsor Banner Guide</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setShowAadsGuide(false)}
+                          className="text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer sm:hidden"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--fg-secondary)]">
+                        {VIEWER_AADS_GUIDELINE}
+                      </p>
+                      <p className="mt-1.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                        Sandboxed &amp; Verified A-ADS Partner Unit
+                      </p>
+                    </div>
+
+                    {isSelfHost ? (
+                      <div className="rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center text-[11px] text-amber-700 dark:text-amber-300">
+                        Your Verified A-ADS Banner ({aadsSize} · Unit #{aadsUnitId}) is active for
+                        viewers here. Self-clicks are disabled in Host View to protect your account.
+                      </div>
+                    ) : (
+                      <div className="flex justify-center overflow-hidden rounded-lg bg-black/20">
+                        <iframe
+                          src={aadsUrl}
+                          title={`Verified A-ADS Sponsor Banner for ${liveStream.hostName}`}
+                          sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+                          referrerPolicy="no-referrer-when-downgrade"
+                          loading="lazy"
+                          style={{
+                            width: `min(100%, ${aadsMeta.width}px)`,
+                            height: `${overlaid && aadsMeta.height > 120 ? 120 : aadsMeta.height}px`,
+                            border: 0,
+                          }}
+                          className="block rounded-md bg-transparent"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            };
 
             const renderVideoStage = (mode: 'full' | 'split' | 'pip') => (
               <div
@@ -1291,6 +1463,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   </div>
                 )}
 
+                {/* Host-Assigned Overlaid A-ADS Banner (Lower-Third or Corner) */}
+                {mode !== 'pip' && renderAadsBanner('lower', true)}
+                {mode !== 'pip' && renderAadsBanner('corner', true)}
+
                 {mode === 'pip' ? (
                   <>
                     <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/75 px-1.5 py-0.5 text-[9px] font-bold text-white">
@@ -1324,27 +1500,67 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   <>
                     <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
                     <div className="absolute inset-x-4 bottom-3.5 flex items-end justify-between gap-3 text-white">
-                      <div className="min-w-0">
-                        <h1 className="font-display text-base sm:text-lg font-bold truncate">
-                          {liveStream.title}
-                        </h1>
-                        <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/85 font-mono-nums">
-                          <span>{countryFlag(liveStream.countryCode)}</span>
-                          <span>{liveStream.hostName}</span>
-                          {liveStream.hostVerified && <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />}
-                          {liveStream.hostNumericId && <span className="opacity-70">#{liveStream.hostNumericId}</span>}
-                          <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
-                          {liveStream.consentVerified && (
-                            <span className="rounded bg-emerald-500/25 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
-                              CONSENTED
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => onViewProfile?.(liveStream.hostUid)}
+                          title={`View ${liveStream.hostName}'s Biodata & CV`}
+                          className="shrink-0 rounded-full ring-2 ring-white/50 hover:ring-[var(--accent-primary)] transition-all cursor-pointer"
+                        >
+                          {liveStream.hostAvatarUrl ? (
+                            <img
+                              src={liveStream.hostAvatarUrl}
+                              alt={liveStream.hostName}
+                              referrerPolicy="no-referrer"
+                              className="h-9 w-9 sm:h-10 sm:w-10 rounded-full object-cover bg-neutral-900"
+                            />
+                          ) : (
+                            <span className="flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] text-xs font-bold text-white">
+                              {(liveStream.hostName || 'ST').slice(0, 2).toUpperCase()}
                             </span>
                           )}
-                          {slowModeSec > 0 && (
-                            <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
-                              SLOW {slowModeSec}s
-                            </span>
-                          )}
-                        </p>
+                        </button>
+                        <div className="min-w-0">
+                          <h1 className="font-display text-base sm:text-lg font-bold truncate">
+                            {liveStream.title}
+                          </h1>
+                          <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/85 font-mono-nums">
+                            <span>{countryFlag(liveStream.countryCode)}</span>
+                            <button
+                              type="button"
+                              onClick={() => onViewProfile?.(liveStream.hostUid)}
+                              className="font-semibold hover:underline cursor-pointer"
+                            >
+                              {liveStream.hostName}
+                            </button>
+                            {(liveStream.hostPartnerVerified || liveStream.hostVerified) && (
+                              <BadgeCheck
+                                className={`h-3.5 w-3.5 ${
+                                  liveStream.hostPartnerVerified ? 'text-emerald-400' : 'text-sky-400'
+                                }`}
+                                aria-label={
+                                  liveStream.hostPartnerVerified
+                                    ? 'Verified Earning Partner'
+                                    : 'Verified Host'
+                                }
+                              />
+                            )}
+                            {liveStream.hostNumericId && (
+                              <span className="opacity-70">#{liveStream.hostNumericId}</span>
+                            )}
+                            <span>· {liveStream.viewerCount.toLocaleString()} {t('viewers')}</span>
+                            {liveStream.consentVerified && (
+                              <span className="rounded bg-emerald-500/25 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                                CONSENTED
+                              </span>
+                            )}
+                            {slowModeSec > 0 && (
+                              <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                                SLOW {slowModeSec}s
+                              </span>
+                            )}
+                          </p>
+                        </div>
                       </div>
                       <div className="shrink-0 text-right">
                         <span className="block font-mono-nums text-xs font-bold tracking-wide text-rose-400">
@@ -1652,32 +1868,36 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
               );
             };
 
-            if (effectiveLayout === 'video') {
-              return renderVideoStage('full');
-            }
-            if (effectiveLayout === 'game_pip') {
-              return renderGameStage(true, false);
-            }
-            if (effectiveLayout === 'split') {
-              const videoHalf = <div className="min-w-0">{renderVideoStage('split')}</div>;
-              const gameHalf = <div className="min-w-0">{renderGameStage(false, false)}</div>;
-              return (
+            const stageContent =
+              effectiveLayout === 'video' ? (
+                renderVideoStage('full')
+              ) : effectiveLayout === 'game_pip' ? (
+                renderGameStage(true, false)
+              ) : effectiveLayout === 'split' ? (
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-stretch">
                   {splitSwapped ? (
                     <>
-                      {gameHalf}
-                      {videoHalf}
+                      <div className="min-w-0">{renderGameStage(false, false)}</div>
+                      <div className="min-w-0">{renderVideoStage('split')}</div>
                     </>
                   ) : (
                     <>
-                      {videoHalf}
-                      {gameHalf}
+                      <div className="min-w-0">{renderVideoStage('split')}</div>
+                      <div className="min-w-0">{renderGameStage(false, false)}</div>
                     </>
                   )}
                 </div>
+              ) : (
+                renderGameStage(false, true)
               );
-            }
-            return renderGameStage(false, true);
+
+            return (
+              <div className="space-y-3">
+                {renderAadsBanner('top')}
+                {stageContent}
+                {renderAadsBanner('below_stage')}
+              </div>
+            );
           })()}
 
           {/* Co-Host / Co-Publish Rail (up to 4 co-hosts — G-037) */}

@@ -22,6 +22,7 @@ import type { DiscoveryFeedTab, Livestream, StreamCategory } from '../types';
 
 interface LiveHomeProps {
   onSelectStream: (stream: Livestream) => void;
+  onViewProfile?: (uid: string) => void;
 }
 
 const DISCOVERY_TABS: Array<{ id: DiscoveryFeedTab; label: string }> = [
@@ -33,7 +34,7 @@ const DISCOVERY_TABS: Array<{ id: DiscoveryFeedTab; label: string }> = [
   { id: 'popular', label: 'Popular' },
 ];
 
-export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
+export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfile }) => {
   const { streams, session, followingHostUids, t } = useApp();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -168,6 +169,24 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
   }, [streams]);
 
   const formatCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+
+  const renderHostAvatar = (stream: Livestream, sizeClass = 'h-5 w-5') => {
+    const initials = (stream.hostName || 'ST').slice(0, 2).toUpperCase();
+    return stream.hostAvatarUrl ? (
+      <img
+        src={stream.hostAvatarUrl}
+        alt={stream.hostName}
+        referrerPolicy="no-referrer"
+        className={`${sizeClass} rounded-full object-cover ring-1 ring-white/50 shrink-0 bg-neutral-900`}
+      />
+    ) : (
+      <span
+        className={`${sizeClass} rounded-full bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] text-[9px] font-bold text-white inline-flex items-center justify-center ring-1 ring-white/40 shrink-0`}
+      >
+        {initials}
+      </span>
+    );
+  };
 
   const toggleSearch = () => {
     setSearchOpen((prev) => {
@@ -508,18 +527,40 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                           </button>
                         </div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onSelectStream(stream)}
-                        className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/92 via-black/45 to-transparent px-3 pb-2.5 flex items-end justify-between text-left text-white cursor-pointer"
-                      >
-                        <div className="min-w-0">
-                          <h2 className="font-display text-xs sm:text-sm font-bold truncate">{stream.title}</h2>
-                          <div className="text-[11px] text-white/75 truncate">
-                            {stream.hostName} {stream.hostNumericId ? `#${stream.hostNumericId}` : ''}
-                          </div>
+                      <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/92 via-black/45 to-transparent px-3 pb-2.5 flex items-end justify-between text-left text-white">
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => onSelectStream(stream)}
+                            className="block w-full text-left cursor-pointer"
+                          >
+                            <h2 className="font-display text-xs sm:text-sm font-bold truncate">
+                              {stream.title}
+                            </h2>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewProfile?.(stream.hostUid);
+                            }}
+                            title={`View ${stream.hostName}'s Biodata & Profile`}
+                            className="mt-0.5 inline-flex max-w-full items-center gap-1.5 text-[11px] text-white/85 hover:text-white cursor-pointer"
+                          >
+                            {renderHostAvatar(stream, 'h-4 w-4')}
+                            <span className="truncate">
+                              {stream.hostName} {stream.hostNumericId ? `#${stream.hostNumericId}` : ''}
+                            </span>
+                            {(stream.hostPartnerVerified || stream.hostVerified) && (
+                              <BadgeCheck
+                                className={`h-3 w-3 shrink-0 ${
+                                  stream.hostPartnerVerified ? 'text-emerald-400' : 'text-sky-400'
+                                }`}
+                              />
+                            )}
+                          </button>
                         </div>
-                      </button>
+                      </div>
                     </article>
                   );
                 })}
@@ -595,17 +636,35 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                     </span>
                   </div>
 
-                  {/* Bottom Contrast Scrim: Host + Verified + #ID + Title */}
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 lg:h-16 bg-gradient-to-t from-black/92 via-black/55 to-transparent" />
-                  <div className="absolute inset-x-2.5 lg:inset-x-2 bottom-2 space-y-0.5 text-white">
+                  {/* Bottom Contrast Scrim: Host Avatar Thumbnail + Verified Badge + Title */}
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 lg:h-20 bg-gradient-to-t from-black/95 via-black/55 to-transparent" />
+                  <div className="absolute inset-x-2.5 lg:inset-x-2 bottom-2 space-y-1 text-white">
                     <h2 className="font-display text-xs sm:text-sm lg:text-xs font-bold leading-snug line-clamp-1">
                       {stream.title}
                     </h2>
-                    <div className="flex items-center justify-between gap-1 text-[10px] text-white/80">
-                      <span className="flex items-center gap-1 truncate font-medium">
+                    <div className="flex items-center justify-between gap-1.5 text-[10px] text-white/85">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onViewProfile?.(stream.hostUid);
+                        }}
+                        title={`View ${stream.hostName}'s Biodata & Profile`}
+                        className="flex items-center gap-1.5 min-w-0 font-medium hover:text-white transition-colors cursor-pointer"
+                      >
+                        {renderHostAvatar(stream, 'h-5 w-5 sm:h-5 sm:w-5')}
                         <span className="truncate">{stream.hostName}</span>
-                        {stream.hostVerified && <BadgeCheck className="h-3 w-3 shrink-0 text-sky-400" />}
-                      </span>
+                        {(stream.hostPartnerVerified || stream.hostVerified) && (
+                          <BadgeCheck
+                            className={`h-3.5 w-3.5 shrink-0 ${
+                              stream.hostPartnerVerified ? 'text-emerald-400' : 'text-sky-400'
+                            }`}
+                            aria-label={
+                              stream.hostPartnerVerified ? 'Verified Earning Partner' : 'Verified Host'
+                            }
+                          />
+                        )}
+                      </button>
                       <span className="shrink-0 text-white/65 hidden sm:inline">
                         {categoryLabels[stream.category]}
                       </span>
@@ -672,8 +731,17 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                     <p className="font-display text-xs font-bold line-clamp-1">
                       {spotlightStream.title}
                     </p>
-                    <p className="text-[11px] text-white/75 truncate">
-                      {spotlightStream.hostName} · {categoryLabels[spotlightStream.category]}
+                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-white/85 truncate">
+                      {renderHostAvatar(spotlightStream, 'h-4 w-4')}
+                      <span className="truncate">{spotlightStream.hostName}</span>
+                      {(spotlightStream.hostPartnerVerified || spotlightStream.hostVerified) && (
+                        <BadgeCheck
+                          className={`h-3 w-3 shrink-0 ${
+                            spotlightStream.hostPartnerVerified ? 'text-emerald-400' : 'text-sky-400'
+                          }`}
+                        />
+                      )}
+                      <span className="opacity-70">· {categoryLabels[spotlightStream.category]}</span>
                     </p>
                   </div>
                 </button>
@@ -711,11 +779,23 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream }) => {
                           <Radio className="h-3.5 w-3.5 text-[var(--accent-primary)]" />
                         </div>
                       )}
+                      <span className="absolute -bottom-0.5 -right-0.5">
+                        {renderHostAvatar(stream, 'h-4 w-4')}
+                      </span>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-1 text-xs font-semibold text-[var(--fg-primary)] truncate group-hover:text-[var(--accent-primary)] transition-colors">
                         <span>{countryFlag(stream.countryCode)}</span>
                         <span className="truncate">{stream.hostName}</span>
+                        {(stream.hostPartnerVerified || stream.hostVerified) && (
+                          <BadgeCheck
+                            className={`h-3 w-3 shrink-0 ${
+                              stream.hostPartnerVerified
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-sky-500'
+                            }`}
+                          />
+                        )}
                       </p>
                       <p className="text-[10px] text-[var(--fg-muted)] truncate">
                         {categoryLabels[stream.category]} · {stream.language}

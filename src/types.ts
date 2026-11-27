@@ -64,6 +64,10 @@ export interface AdminPermissions {
   canRunPK: boolean;
 }
 
+export type AadsStatus = 'none' | 'pending' | 'verified' | 'rejected';
+export type BannerPlacement = 'top' | 'lower' | 'corner' | 'below_stage';
+export type BannerSize = '728x90' | '468x60' | '300x250' | '320x50';
+
 export interface AuthSession {
   token: string;
   uid: string;
@@ -82,30 +86,98 @@ export interface AuthSession {
   vipUntil: number;
   isPro: boolean;
   verified: boolean;
+  partnerVerified?: boolean;
   freePinTrials: number;
   dailyStreak: number;
   checkedInToday: boolean;
   totpEnabled: boolean;
   ownedPerks: string[];
   monetagStatus: 'none' | 'pending' | 'verified' | 'rejected';
+  monetagEmail?: string;
+  monetagPublisherId?: string;
   monetagTipUrl?: string;
+  aadsStatus: AadsStatus;
+  aadsEmail?: string;
+  aadsUnitId?: string;
+  aadsBannerPos: BannerPlacement;
+  aadsBannerSize: BannerSize;
+  avatarUrl?: string;
+  coverUrl?: string;
+  headline?: string;
+  location?: string;
+  languages?: string;
+  skills?: string;
+  schedule?: string;
+  websiteUrl?: string;
   bio?: string;
   age?: string;
   gender?: string;
   hobbies?: string;
+  showBio?: boolean;
   showAge?: boolean;
   showGender?: boolean;
+  showLocation?: boolean;
+  showLanguages?: boolean;
+  showSkills?: boolean;
+  showSchedule?: boolean;
+  showHobbies?: boolean;
+  showWebsite?: boolean;
   showFollowers?: boolean;
   showVisits?: boolean;
   allowDm?: boolean;
-  bannerPos?: 'top' | 'lower' | 'corner';
-  bannerSize?: '728x90' | '468x60' | '300x250';
+  bannerPos?: BannerPlacement;
+  bannerSize?: BannerSize;
   bannedUntil?: number;
   banStrikes?: number;
   assignedHostUid?: string;
   assignedHostName?: string;
   permissions?: AdminPermissions;
   isTestMode?: boolean;
+}
+
+export interface HostDailyTask {
+  id: string;
+  title: string;
+  description: string;
+  category: 'stream' | 'community' | 'profile' | 'game' | 'monetize';
+  target: number;
+  progress: number;
+  completed: boolean;
+  claimed: boolean;
+  rewardXp: number;
+  rewardCoins: number;
+  rewardTokens: number;
+}
+
+export interface PublicUserProfile {
+  uid: string;
+  numericId: number;
+  displayName: string;
+  role: UserRole;
+  countryCode: string;
+  level: number;
+  xp: number;
+  verified: boolean;
+  partnerVerified: boolean;
+  monetagVerified: boolean;
+  aadsVerified: boolean;
+  isVip: boolean;
+  isPro: boolean;
+  avatarUrl?: string;
+  coverUrl?: string;
+  headline?: string;
+  bio?: string;
+  age?: string;
+  gender?: string;
+  location?: string;
+  languages?: string;
+  skills?: string;
+  schedule?: string;
+  hobbies?: string;
+  websiteUrl?: string;
+  followerCount?: number;
+  allowDm: boolean;
+  liveStreamId?: string;
 }
 
 export interface DirectoryUser {
@@ -115,6 +187,7 @@ export interface DirectoryUser {
   role: UserRole;
   countryCode?: string;
   verified?: boolean;
+  avatarUrl?: string;
 }
 
 export interface AdminGrantSummary {
@@ -173,8 +246,13 @@ export interface Livestream {
   hostUid: string;
   hostNumericId?: number;
   hostName: string;
+  hostAvatarUrl?: string;
   hostVerified?: boolean;
+  hostPartnerVerified?: boolean;
   hostMonetagTipUrl?: string;
+  hostAadsUnitId?: string;
+  hostAadsBannerPos?: BannerPlacement;
+  hostAadsBannerSize?: BannerSize;
   countryCode: string;
   title: string;
   category: Exclude<StreamCategory, 'all'>;

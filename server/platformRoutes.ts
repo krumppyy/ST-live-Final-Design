@@ -13,12 +13,16 @@ import {
   approvePasswordResetDb,
   blockUserForHost,
   claimDailyCheckInDb,
+  claimHostDailyTaskDb,
   claimTopupPack,
   confirmPasswordResetDb,
   findUserByIdentifier,
   getFollowingHostUids,
   getFullUserRow,
+  getHostDailyTasksDb,
+  getPublicUserProfileDb,
   hydrateAuthSession,
+  incrementHostDailyTaskDb,
   isBlockedByHost,
   listAppealsDb,
   listAuditLogs,
@@ -58,14 +62,17 @@ import {
   checkResetThrottle,
   clearLoginFailures,
   clearPinFailures,
+  extractSafeAadsUnitIdServer,
   generateTotpCode,
   generateTotpSecret,
   getThreatState,
   isReservedDisplayName,
+  isSafeHttpsUrlServer,
   isThreatBlocked,
   maskEmail,
   recordLoginFailure,
   recordPinFailure,
+  sanitizeImageMediaUrl,
   setGlobalLockdown,
   splitContact,
   stripProtoPollution,
@@ -320,37 +327,111 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
     res.json({ session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode) });
   });
 
+  router.get('/users/:uid/profile', (req, res) => {
+    const uid = String(req.params.uid || '').trim();
+    if (!uid) return res.status(400).json({ error: 'User UID is required.' });
+    const profile = getPublicUserProfileDb(uid);
+    if (!profile) return res.status(404).json({ error: 'Creator profile not found.' });
+    res.json({ profile });
+  });
+
   router.patch('/me/profile', (req, res) => {
     const session = requireAuth(req, res);
     if (!session) return;
     const clientKey = getClientKey(req);
-    const bio = threatScan(String(req.body?.bio ?? session.bio ?? '').slice(0, 220), clientKey).clean;
+    const bio = threatScan(String(req.body?.bio ?? session.bio ?? '').slice(0, 320), clientKey).clean;
+    const headline = threatScan(String(req.body?.headline ?? session.headline ?? '').slice(0, 90), clientKey).clean;
+    const location = threatScan(String(req.body?.location ?? session.location ?? '').slice(0, 80), clientKey).clean;
+    const languages = threatScan(String(req.body?.languages ?? session.languages ?? '').slice(0, 100), clientKey).clean;
+    const skills = threatScan(String(req.body?.skills ?? session.skills ?? '').slice(0, 160), clientKey).clean;
+    const schedule = threatScan(String(req.body?.schedule ?? session.schedule ?? '').slice(0, 90), clientKey).clean;
     const age = threatScan(String(req.body?.age ?? session.age ?? '').slice(0, 12), clientKey).clean;
     const gender = threatScan(String(req.body?.gender ?? session.gender ?? '').slice(0, 24), clientKey).clean;
-    const hobbies = threatScan(String(req.body?.hobbies ?? session.hobbies ?? '').slice(0, 120), clientKey).clean;
+    const hobbies = threatScan(String(req.body?.hobbies ?? session.hobbies ?? '').slice(0, 140), clientKey).clean;
     const countryCode = String(req.body?.countryCode ?? session.countryCode ?? 'US').toUpperCase().slice(0, 2);
+
+    let websiteUrl = session.websiteUrl || '';
+    if (typeof req.body?.websiteUrl === 'string') {
+      const rawSite = req.body.websiteUrl.trim();
+      if (!rawSite) {
+        websiteUrl = '';
+      } else if (isSafeHttpsUrlServer(rawSite)) {
+        websiteUrl = rawSite.slice(0, 200);
+      } else {
+        return res.status(400).json({ error: 'Portfolio / social link must be a valid https:// URL.' });
+      }
+    }
+
+    let avatarUrl = session.avatarUrl || '';
+    if (req.body?.avatarUrl !== undefined) {
+      const safeAvatar = sanitizeImageMediaUrl(req.body.avatarUrl);
+      if (safeAvatar === null) {
+        return res.status(400).json({ error: 'Invalid profile picture format or size (use JPEG/PNG/WebP under 450KB).' });
+      }
+      avatarUrl = safeAvatar;
+    }
+
+    let coverUrl = session.coverUrl || '';
+    if (req.body?.coverUrl !== undefined) {
+      const safeCover = sanitizeImageMediaUrl(req.body.coverUrl);
+      if (safeCover === null) {
+        return res.status(400).json({ error: 'Invalid cover photo format or size (use JPEG/PNG/WebP under 450KB).' });
+      }
+      coverUrl = safeCover;
+    }
+
+    const showBio = req.body?.showBio === false ? 0 : 1;
     const showAge = req.body?.showAge ? 1 : 0;
     const showGender = req.body?.showGender ? 1 : 0;
+    const showLocation = req.body?.showLocation === false ? 0 : 1;
+    const showLanguages = req.body?.showLanguages === false ? 0 : 1;
+    const showSkills = req.body?.showSkills === false ? 0 : 1;
+    const showSchedule = req.body?.showSchedule === false ? 0 : 1;
+    const showHobbies = req.body?.showHobbies === false ? 0 : 1;
+    const showWebsite = req.body?.showWebsite === false ? 0 : 1;
     const showFollowers = req.body?.showFollowers === false ? 0 : 1;
     const showVisits = req.body?.showVisits === false ? 0 : 1;
     const allowDm = req.body?.allowDm === false ? 0 : 1;
-    const bannerPos = ['top', 'lower', 'corner'].includes(req.body?.bannerPos) ? req.body.bannerPos : 'lower';
-    const bannerSize = ['728x90', '468x60', '300x250'].includes(req.body?.bannerSize) ? req.body.bannerSize : '728x90';
+    const bannerPos = ['top', 'lower', 'corner', 'below_stage'].includes(req.body?.bannerPos)
+      ? req.body.bannerPos
+      : session.bannerPos || 'below_stage';
+    const bannerSize = ['728x90', '468x60', '300x250', '320x50'].includes(req.body?.bannerSize)
+      ? req.body.bannerSize
+      : session.bannerSize || '728x90';
 
     db.prepare(
       `UPDATE users
-       SET country_code = ?, bio = ?, age = ?, gender = ?, hobbies = ?,
-           show_age = ?, show_gender = ?, show_followers = ?, show_visits = ?, allow_dm = ?,
+       SET country_code = ?, avatar_url = ?, cover_url = ?, headline = ?, location = ?,
+           languages = ?, skills = ?, schedule = ?, website_url = ?,
+           bio = ?, age = ?, gender = ?, hobbies = ?,
+           show_bio = ?, show_age = ?, show_gender = ?, show_location = ?,
+           show_languages = ?, show_skills = ?, show_schedule = ?, show_hobbies = ?,
+           show_website = ?, show_followers = ?, show_visits = ?, allow_dm = ?,
            banner_pos = ?, banner_size = ?
        WHERE uid = ?`
     ).run(
       countryCode,
+      avatarUrl,
+      coverUrl,
+      headline,
+      location,
+      languages,
+      skills,
+      schedule,
+      websiteUrl,
       bio,
       age,
       gender,
       hobbies,
+      showBio,
       showAge,
       showGender,
+      showLocation,
+      showLanguages,
+      showSkills,
+      showSchedule,
+      showHobbies,
+      showWebsite,
       showFollowers,
       showVisits,
       allowDm,
@@ -358,7 +439,26 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
       bannerSize,
       session.uid
     );
+    incrementHostDailyTaskDb(session.uid, 'polish_profile', 1);
+    hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
     res.json({
+      session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
+    });
+  });
+
+  router.get('/me/daily-tasks', (req, res) => {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    res.json({ tasks: getHostDailyTasksDb(session.uid) });
+  });
+
+  router.post('/me/daily-tasks/:taskId/claim', (req, res) => {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    const out = claimHostDailyTaskDb(session.uid, String(req.params.taskId || ''));
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    res.json({
+      ...out,
       session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
     });
   });
@@ -371,11 +471,12 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
       blockedUsers: listBlockedByHost(session.uid),
       payouts: listPayoutsDb(session.uid),
       appeals: listAppealsDb(session.uid),
+      dailyTasks: getHostDailyTasksDb(session.uid),
     });
   });
 
   // =========================================================================
-  // 2. SERVER-AUTHORITATIVE ECONOMY (CHECK-IN, GIFTS, VIP, SHOP, TOPUP, PAYOUT, MONETAG)
+  // 2. SERVER-AUTHORITATIVE ECONOMY (CHECK-IN, GIFTS, VIP, SHOP, TOPUP, PAYOUT, MONETAG, A-ADS)
   // =========================================================================
 
   router.post('/economy/checkin', (req, res) => {
@@ -383,6 +484,7 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
     if (!session) return;
     const out = claimDailyCheckInDb(session.uid);
     if (!out.ok) return res.status(400).json({ error: out.error });
+    incrementHostDailyTaskDb(session.uid, 'daily_checkin', 1);
     res.json({
       ...out,
       session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
@@ -501,16 +603,84 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
   router.post('/economy/monetag', (req, res) => {
     const session = requireAuth(req, res);
     if (!session) return;
-    const email = String(req.body?.email ?? '').trim();
+    if (req.body?.checklistAccepted !== true) {
+      return res.status(400).json({ error: 'Please review and tick every guideline checklist box before submitting.' });
+    }
+    const email = String(req.body?.email ?? '').trim().slice(0, 120);
     const pubId = String(req.body?.publisherId ?? '').trim().slice(0, 64);
-    const tipUrl = String(req.body?.tipUrl ?? '').trim().slice(0, 240);
-    if (!email.includes('@') || !pubId || !/^https:\/\//i.test(tipUrl)) {
-      return res.status(400).json({ error: 'Provide a valid email, Publisher ID, and HTTPS Free-Tip link.' });
+    const tipUrl = String(req.body?.tipUrl ?? '').trim().slice(0, 280);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || pubId.length < 2 || !isSafeHttpsUrlServer(tipUrl)) {
+      return res.status(400).json({
+        error: 'Provide a valid Monetag email, Publisher ID, and strict HTTPS Free-Tip Direct Link.',
+      });
     }
     db.prepare(
-      `UPDATE users SET monetag_status = 'pending', monetag_email = ?, monetag_pub_id = ?, monetag_tip_url = ? WHERE uid = ?`
-    ).run(email, pubId, tipUrl, session.uid);
+      `UPDATE users
+       SET monetag_status = 'pending', monetag_email = ?, monetag_pub_id = ?, monetag_tip_url = ?, monetag_checklist_at = ?
+       WHERE uid = ?`
+    ).run(email, pubId, tipUrl, Date.now(), session.uid);
+    incrementHostDailyTaskDb(session.uid, 'partner_setup', 1);
     writeAuditLog(session.uid, 'monetag_submit', session.uid, maskEmail(email));
+    res.json({
+      ok: true,
+      session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
+    });
+  });
+
+  router.post('/economy/aads', (req, res) => {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    if (req.body?.checklistAccepted !== true) {
+      return res.status(400).json({ error: 'Please review and tick every guideline checklist box before submitting.' });
+    }
+    const email = String(req.body?.email ?? '').trim().slice(0, 120);
+    const unitId = extractSafeAadsUnitIdServer(req.body?.unitId);
+    const bannerPos = ['top', 'lower', 'corner', 'below_stage'].includes(req.body?.bannerPos)
+      ? req.body.bannerPos
+      : 'below_stage';
+    const bannerSize = ['728x90', '468x60', '300x250', '320x50'].includes(req.body?.bannerSize)
+      ? req.body.bannerSize
+      : '728x90';
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      return res.status(400).json({ error: 'Provide a valid A-ADS account email address.' });
+    }
+    if (!unitId) {
+      return res.status(400).json({
+        error: 'Enter a valid numeric A-ADS Ad Unit ID (4–12 digits) or paste an official ad.a-ads.com iframe snippet.',
+      });
+    }
+
+    db.prepare(
+      `UPDATE users
+       SET aads_status = 'pending', aads_email = ?, aads_unit_id = ?,
+           aads_banner_pos = ?, aads_banner_size = ?, aads_checklist_at = ?
+       WHERE uid = ?`
+    ).run(email, unitId, bannerPos, bannerSize, Date.now(), session.uid);
+    incrementHostDailyTaskDb(session.uid, 'partner_setup', 1);
+    writeAuditLog(session.uid, 'aads_submit', session.uid, `unit=${unitId} pos=${bannerPos}`);
+    res.json({
+      ok: true,
+      unitId,
+      session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
+    });
+  });
+
+  router.patch('/economy/aads/placement', (req, res) => {
+    const session = requireAuth(req, res);
+    if (!session) return;
+    const bannerPos = ['top', 'lower', 'corner', 'below_stage'].includes(req.body?.bannerPos)
+      ? req.body.bannerPos
+      : 'below_stage';
+    const bannerSize = ['728x90', '468x60', '300x250', '320x50'].includes(req.body?.bannerSize)
+      ? req.body.bannerSize
+      : '728x90';
+    db.prepare('UPDATE users SET aads_banner_pos = ?, aads_banner_size = ? WHERE uid = ?').run(
+      bannerPos,
+      bannerSize,
+      session.uid
+    );
+    hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
     res.json({
       ok: true,
       session: hydrateAuthSession(session.token, session.uid, session.role, session.assignedHostUid, session.isTestMode),
@@ -723,7 +893,12 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
     if (!requireStaff(req, res)) return;
     const pendingMonetag = db
       .prepare(
-        "SELECT uid, display_name, monetag_status, monetag_pub_id, monetag_tip_url FROM users WHERE monetag_status != 'none' ORDER BY created_at DESC LIMIT 30"
+        "SELECT uid, numeric_id, display_name, monetag_status, monetag_email, monetag_pub_id, monetag_tip_url FROM users WHERE monetag_status != 'none' ORDER BY monetag_checklist_at DESC, created_at DESC LIMIT 30"
+      )
+      .all() as Array<Record<string, any>>;
+    const pendingAads = db
+      .prepare(
+        "SELECT uid, numeric_id, display_name, aads_status, aads_email, aads_unit_id, aads_banner_pos, aads_banner_size FROM users WHERE aads_status != 'none' ORDER BY aads_checklist_at DESC, created_at DESC LIMIT 30"
       )
       .all() as Array<Record<string, any>>;
     res.json({
@@ -733,10 +908,22 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
       resets: listPasswordResetsDb(),
       monetagQueue: pendingMonetag.map((m) => ({
         uid: m.uid,
+        numericId: Number(m.numeric_id || 100100),
         displayName: m.display_name,
         status: m.monetag_status,
+        email: m.monetag_email || '',
         publisherId: m.monetag_pub_id || '',
         tipUrl: m.monetag_tip_url || '',
+      })),
+      aadsQueue: pendingAads.map((a) => ({
+        uid: a.uid,
+        numericId: Number(a.numeric_id || 100100),
+        displayName: a.display_name,
+        status: a.aads_status,
+        email: a.aads_email || '',
+        unitId: a.aads_unit_id || '',
+        bannerPos: a.aads_banner_pos || 'below_stage',
+        bannerSize: a.aads_banner_size || '728x90',
       })),
       threat: getThreatState(),
       auditLogs: listAuditLogs(),
@@ -774,8 +961,26 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
     const staff = requireStaff(req, res);
     if (!staff) return;
     const status = req.body?.status === 'verified' ? 'verified' : 'rejected';
-    db.prepare('UPDATE users SET monetag_status = ? WHERE uid = ?').run(status, req.params.uid);
+    if (status === 'verified') {
+      db.prepare("UPDATE users SET monetag_status = 'verified', verified = 1 WHERE uid = ?").run(req.params.uid);
+    } else {
+      db.prepare("UPDATE users SET monetag_status = 'rejected' WHERE uid = ?").run(req.params.uid);
+    }
     writeAuditLog(staff.uid, `monetag_${status}`, req.params.uid);
+    hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
+    res.json({ ok: true });
+  });
+
+  router.post('/staff/aads/:uid/verify', (req, res) => {
+    const staff = requireStaff(req, res);
+    if (!staff) return;
+    const status = req.body?.status === 'verified' ? 'verified' : 'rejected';
+    if (status === 'verified') {
+      db.prepare("UPDATE users SET aads_status = 'verified', verified = 1 WHERE uid = ?").run(req.params.uid);
+    } else {
+      db.prepare("UPDATE users SET aads_status = 'rejected' WHERE uid = ?").run(req.params.uid);
+    }
+    writeAuditLog(staff.uid, `aads_${status}`, req.params.uid);
     hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
     res.json({ ok: true });
   });

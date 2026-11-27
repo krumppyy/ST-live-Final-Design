@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { computeLevelInfo, cumulativeXpForLevel } from '../src/lib/leveling';
 
 // ---------------------------------------------------------------------------
 // StreamLive Economy, Leveling, Ban Ladder & Security Constants (GapList parity)
@@ -68,20 +69,63 @@ export const REPORT_REASONS = [
 ] as const;
 
 export function xpNeededForLevel(level: number): number {
-  const clamped = Math.max(0, Math.min(300, Math.floor(level)));
-  return Math.floor(50 * clamped + 15 * clamped * clamped);
+  return cumulativeXpForLevel(Math.max(1, Math.min(300, Math.floor(level))));
 }
 
 export function levelFromXp(xp: number): number {
-  const safeXp = Math.max(0, Math.floor(xp));
-  let lo = 0;
-  let hi = 300;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (xpNeededForLevel(mid) <= safeXp) lo = mid;
-    else hi = mid - 1;
+  return computeLevelInfo(xp).level;
+}
+
+export function sanitizeImageMediaUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (trimmed.length > 480_000) return null;
+  // Allow bundled local static assets
+  if (/^\/src\/assets\/[a-zA-Z0-9_./-]+\.(?:jpg|jpeg|png|webp)$/i.test(trimmed)) {
+    return trimmed;
   }
-  return lo;
+  // Allow compressed raster data URLs (strictly reject svg/xml/html)
+  if (/^data:image\/(?:jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    return trimmed;
+  }
+  // Allow safe HTTPS external image URLs
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' && parsed.hostname.includes('.') && parsed.hostname !== 'localhost') {
+      return trimmed.slice(0, 500);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export function extractSafeAadsUnitIdServer(raw: unknown): string | null {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed) return null;
+  if (/^\d{4,12}$/.test(trimmed)) return trimmed;
+  const fromUrl = trimmed.match(/a-ads\.com\/(\d{4,12})/i);
+  if (fromUrl?.[1]) return fromUrl[1];
+  const fromAttr = trimmed.match(/data-aa\s*=\s*['"]?(\d{4,12})['"]?/i);
+  if (fromAttr?.[1]) return fromAttr[1];
+  return null;
+}
+
+export function isSafeHttpsUrlServer(raw: unknown): boolean {
+  const s = String(raw ?? '').trim();
+  if (!s || s.length > 300) return false;
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
+    if (h === 'localhost' || h === '127.0.0.1' || h === '0.0.0.0' || h.endsWith('.local') || !h.includes('.')) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function priceAfterDiscount(

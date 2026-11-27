@@ -5,12 +5,16 @@ import {
   BadgeCheck,
   Ban,
   CalendarCheck,
+  Camera,
   CheckCircle2,
+  ClipboardCheck,
   Coins,
   Crown,
   DollarSign,
-  ExternalLink,
+  Eye,
+  Film,
   Gem,
+  Image as ImageIcon,
   KeyRound,
   Lock,
   LogOut,
@@ -19,19 +23,59 @@ import {
   ShieldAlert,
   ShoppingBag,
   Sparkles,
+  Upload,
   User,
   Wallet,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { COUNTRIES, countryFlag } from '../lib/countries';
-import type { AuditLogEntry, PasswordResetRecord, PayoutRecord, SafetyAppeal, SafetyReport } from '../types';
+import { computeLevelInfo, LEVEL_MILESTONES } from '../lib/leveling';
+import type {
+  AuditLogEntry,
+  BannerPlacement,
+  BannerSize,
+  HostDailyTask,
+  PasswordResetRecord,
+  PayoutRecord,
+  SafetyAppeal,
+  SafetyReport,
+} from '../types';
+import { FreeToEarnHub } from './FreeToEarnHub';
+
+export type MeTab = 'profile' | 'wallet' | 'vip' | 'earning' | 'safety' | 'staff';
 
 interface MeHubProps {
+  initialSubTab?: MeTab | null;
+  onConsumeSubTab?: () => void;
   onOpenLogin: () => void;
   onOpenTestMode: () => void;
+  onViewPublicProfile?: (uid: string) => void;
 }
 
-type MeTab = 'profile' | 'wallet' | 'vip' | 'earning' | 'safety' | 'staff';
+async function compressImageToDataUrl(file: File, maxDim: number, quality = 0.82): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Invalid image file.'));
+      img.onload = () => {
+        const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Canvas unavailable.'));
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = String(reader.result || '');
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const SHOP_PERKS = [
   { id: 'pro_membership', name: 'PRO Membership (-5% Gifts)', price: 2000, minLevel: 1, desc: 'Permanent PRO badge + 5% off every gift sent' },
@@ -55,7 +99,13 @@ const TOPUP_PACKS = [
   { id: 'p1000', label: 'Nova Whale Pack', coins: 1000, bonus: 'Best Value', priceLabel: '$8.99 Sandbox' },
 ];
 
-export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => {
+export const MeHub: React.FC<MeHubProps> = ({
+  initialSubTab,
+  onConsumeSubTab,
+  onOpenLogin,
+  onOpenTestMode,
+  onViewPublicProfile,
+}) => {
   const {
     session,
     setSession,
@@ -64,27 +114,48 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
     claimDailyCheckIn,
     checkedInToday,
     followingHostUids,
+    mediaLibrary,
     pushToast,
   } = useApp();
 
-  const [subTab, setSubTab] = useState<MeTab>(session?.role === 'staff' ? 'staff' : 'profile');
+  const [subTab, setSubTab] = useState<MeTab>(
+    initialSubTab || (session?.role === 'staff' ? 'staff' : 'profile')
+  );
   const [busy, setBusy] = useState(false);
 
-  // Profile form state
+  // Profile Biodata / CV & Media form state
   const [countryCode, setCountryCode] = useState(session?.countryCode || 'US');
+  const [avatarUrl, setAvatarUrl] = useState(session?.avatarUrl || '');
+  const [coverUrl, setCoverUrl] = useState(session?.coverUrl || '');
+  const [libraryPickerTarget, setLibraryPickerTarget] = useState<'none' | 'avatar' | 'cover'>('none');
+  const [headline, setHeadline] = useState(session?.headline || '');
+  const [location, setLocation] = useState(session?.location || '');
+  const [languages, setLanguages] = useState(session?.languages || '');
+  const [skills, setSkills] = useState(session?.skills || '');
+  const [schedule, setSchedule] = useState(session?.schedule || '');
+  const [websiteUrl, setWebsiteUrl] = useState(session?.websiteUrl || '');
   const [bio, setBio] = useState(session?.bio || '');
   const [age, setAge] = useState(session?.age || '');
   const [gender, setGender] = useState(session?.gender || '');
   const [hobbies, setHobbies] = useState(session?.hobbies || '');
+  const [showBio, setShowBio] = useState(session?.showBio !== false);
   const [showAge, setShowAge] = useState(Boolean(session?.showAge));
   const [showGender, setShowGender] = useState(Boolean(session?.showGender));
+  const [showLocation, setShowLocation] = useState(session?.showLocation !== false);
+  const [showLanguages, setShowLanguages] = useState(session?.showLanguages !== false);
+  const [showSkills, setShowSkills] = useState(session?.showSkills !== false);
+  const [showSchedule, setShowSchedule] = useState(session?.showSchedule !== false);
+  const [showHobbies, setShowHobbies] = useState(session?.showHobbies !== false);
+  const [showWebsite, setShowWebsite] = useState(session?.showWebsite !== false);
   const [showFollowers, setShowFollowers] = useState(session?.showFollowers !== false);
   const [showVisits, setShowVisits] = useState(session?.showVisits !== false);
   const [allowDm, setAllowDm] = useState(session?.allowDm !== false);
-  const [bannerPos, setBannerPos] = useState<'top' | 'lower' | 'corner'>(session?.bannerPos || 'lower');
-  const [bannerSize, setBannerSize] = useState<'728x90' | '468x60' | '300x250'>(session?.bannerSize || '728x90');
+  const [bannerPos, setBannerPos] = useState<BannerPlacement>(session?.bannerPos || 'below_stage');
+  const [bannerSize, setBannerSize] = useState<BannerSize>(session?.bannerSize || '728x90');
 
-  // Social / Payouts / Appeals state
+  // Daily Host Tasks + Social / Payouts / Appeals state
+  const [dailyTasks, setDailyTasks] = useState<HostDailyTask[]>([]);
+  const [claimingTaskId, setClaimingTaskId] = useState<string | null>(null);
   const [blockedUsers, setBlockedUsers] = useState<Array<{ uid: string; displayName: string; reason: string }>>([]);
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [appeals, setAppeals] = useState<SafetyAppeal[]>([]);
@@ -94,44 +165,80 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
   const [payoutMethod, setPayoutMethod] = useState('PayPal');
   const [payoutDestination, setPayoutDestination] = useState('');
 
-  // Monetag form
-  const [monetagEmail, setMonetagEmail] = useState('');
-  const [monetagPubId, setMonetagPubId] = useState('');
-  const [monetagTipUrl, setMonetagTipUrl] = useState(session?.monetagTipUrl || '');
-
   // 2FA & Appeal state
   const [totpSetup, setTotpSetup] = useState<{ secret: string; otpauthUrl: string; demoCode: string } | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const [appealReason, setAppealReason] = useState('');
 
   // Staff Console state
-  const [staffSection, setStaffSection] = useState<'reports' | 'appeals' | 'payouts' | 'resets' | 'monetag' | 'threat' | 'audit'>('reports');
+  const [staffSection, setStaffSection] = useState<
+    'reports' | 'appeals' | 'payouts' | 'resets' | 'monetag' | 'aads' | 'threat' | 'audit'
+  >('reports');
   const [staffData, setStaffData] = useState<{
     reports: SafetyReport[];
     appeals: SafetyAppeal[];
     payouts: PayoutRecord[];
     resets: PasswordResetRecord[];
-    monetagQueue: Array<{ uid: string; displayName: string; status: string; publisherId: string; tipUrl: string }>;
-    threat: { lockdownUntil: number; activeBlocks: Array<{ key: string; until: number; strikes: number }> };
+    monetagQueue: Array<{
+      uid: string;
+      numericId?: number;
+      displayName: string;
+      status: string;
+      email?: string;
+      publisherId: string;
+      tipUrl: string;
+    }>;
+    aadsQueue: Array<{
+      uid: string;
+      numericId?: number;
+      displayName: string;
+      status: string;
+      email?: string;
+      unitId: string;
+      bannerPos: string;
+      bannerSize: string;
+    }>;
+    threat: { lockdownUntil: number; activeBlocks?: Array<{ key: string; until: number; strikes: number }>; entries?: Array<{ key: string; blockedUntil: number; strikes: number }> };
     auditLogs: AuditLogEntry[];
   } | null>(null);
 
   useEffect(() => {
+    if (initialSubTab) {
+      setSubTab(initialSubTab);
+      onConsumeSubTab?.();
+    }
+  }, [initialSubTab, onConsumeSubTab]);
+
+  useEffect(() => {
     if (!session) return;
     setCountryCode(session.countryCode || 'US');
+    setAvatarUrl(session.avatarUrl || '');
+    setCoverUrl(session.coverUrl || '');
+    setHeadline(session.headline || '');
+    setLocation(session.location || '');
+    setLanguages(session.languages || '');
+    setSkills(session.skills || '');
+    setSchedule(session.schedule || '');
+    setWebsiteUrl(session.websiteUrl || '');
     setBio(session.bio || '');
     setAge(session.age || '');
     setGender(session.gender || '');
     setHobbies(session.hobbies || '');
+    setShowBio(session.showBio !== false);
     setShowAge(Boolean(session.showAge));
     setShowGender(Boolean(session.showGender));
+    setShowLocation(session.showLocation !== false);
+    setShowLanguages(session.showLanguages !== false);
+    setShowSkills(session.showSkills !== false);
+    setShowSchedule(session.showSchedule !== false);
+    setShowHobbies(session.showHobbies !== false);
+    setShowWebsite(session.showWebsite !== false);
     setShowFollowers(session.showFollowers !== false);
     setShowVisits(session.showVisits !== false);
     setAllowDm(session.allowDm !== false);
-    setBannerPos(session.bannerPos || 'lower');
+    setBannerPos(session.bannerPos || 'below_stage');
     setBannerSize(session.bannerSize || '728x90');
-    setMonetagTipUrl(session.monetagTipUrl || '');
-    if (session.role === 'staff' && subTab === 'profile') {
+    if (session.role === 'staff' && subTab === 'profile' && !initialSubTab) {
       setSubTab('staff');
     }
   }, [session?.uid]);
@@ -145,6 +252,9 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
         setBlockedUsers(data.blockedUsers || []);
         setPayouts(data.payouts || []);
         setAppeals(data.appeals || []);
+        if (Array.isArray(data.dailyTasks)) {
+          setDailyTasks(data.dailyTasks);
+        }
       }
     } catch {
       // ignore
@@ -218,12 +328,27 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
         method: 'PATCH',
         body: JSON.stringify({
           countryCode,
+          avatarUrl,
+          coverUrl,
+          headline,
+          location,
+          languages,
+          skills,
+          schedule,
+          websiteUrl,
           bio,
           age,
           gender,
           hobbies,
+          showBio,
           showAge,
           showGender,
+          showLocation,
+          showLanguages,
+          showSkills,
+          showSchedule,
+          showHobbies,
+          showWebsite,
           showFollowers,
           showVisits,
           allowDm,
@@ -237,9 +362,47 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
         return;
       }
       updateSessionFromResp(data.session);
-      pushToast('Profile & privacy settings saved.', 'success');
+      await loadSocialData();
+      pushToast('Creator Biodata, photos & visibility settings saved!', 'success');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleUploadImage = async (target: 'avatar' | 'cover', file?: File | null) => {
+    if (!file) return;
+    try {
+      const dataUrl = await compressImageToDataUrl(file, target === 'avatar' ? 420 : 1080, 0.8);
+      if (target === 'avatar') setAvatarUrl(dataUrl);
+      else setCoverUrl(dataUrl);
+      pushToast(
+        `${target === 'avatar' ? 'Profile photo' : 'Cover banner'} ready — click Save Biodata & Photos to publish.`,
+        'info'
+      );
+    } catch {
+      pushToast('Could not process that image. Please choose a JPEG, PNG, or WebP photo.', 'error');
+    }
+  };
+
+  const handleClaimDailyTask = async (taskId: string) => {
+    setClaimingTaskId(taskId);
+    try {
+      const res = await authFetch(`/api/me/daily-tasks/${encodeURIComponent(taskId)}/claim`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        pushToast(data.error || 'Could not claim task reward.', 'error');
+        return;
+      }
+      updateSessionFromResp(data.session);
+      if (Array.isArray(data.tasks)) setDailyTasks(data.tasks);
+      pushToast(
+        `Task claimed! +${data.rewardXp} XP, +${data.rewardCoins} Coins, +${data.rewardTokens} Tokens!`,
+        'success'
+      );
+    } finally {
+      setClaimingTaskId(null);
     }
   };
 
@@ -321,30 +484,6 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
       setPayoutDestination('');
       await loadSocialData();
       pushToast('Payout request submitted to Staff review!', 'success');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleSubmitMonetag = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    try {
-      const res = await authFetch('/api/economy/monetag', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: monetagEmail,
-          publisherId: monetagPubId,
-          tipUrl: monetagTipUrl,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        pushToast(data.error || 'Monetag submission failed.', 'error');
-        return;
-      }
-      updateSessionFromResp(data.session);
-      pushToast('Monetag Free-Tip application submitted for staff verification!', 'success');
     } finally {
       setBusy(false);
     }
@@ -446,123 +585,344 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
   };
 
   const isVipActive = session.vipUntil > Date.now();
-  const levelProgress = Math.min(100, Math.round(((session.xp % 300) / 300) * 100));
+  const levelInfo = computeLevelInfo(session.xp);
+  const libraryPhotos = mediaLibrary.filter((m) => m.type === 'photo');
 
   const tabs: Array<{ id: MeTab; label: string; icon: React.ElementType }> = [
-    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'profile', label: 'Biodata & Tasks', icon: User },
     { id: 'wallet', label: 'Wallet & Shop', icon: Wallet },
     { id: 'vip', label: 'VIP & Levels', icon: Crown },
-    { id: 'earning', label: 'Earning & Payouts', icon: DollarSign },
+    { id: 'earning', label: 'Join Free to Earn', icon: DollarSign },
     { id: 'safety', label: 'Safety & 2FA', icon: KeyRound },
     ...(session.role === 'staff' ? [{ id: 'staff' as MeTab, label: 'Staff Console', icon: Shield }] : []),
   ];
 
   return (
     <main className="sl-fluid-page py-5 pb-24 md:pb-12 space-y-5">
-      {/* Compact Account Identity Header */}
-      <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--accent-primary)]/15 border border-[var(--accent-primary)]/40 text-xl">
-              {countryFlag(session.countryCode)}
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="font-display text-lg font-bold">{session.displayName}</h1>
-                {session.verified && <BadgeCheck className="h-4 w-4 text-sky-400" />}
-                <span className="font-mono-nums text-xs text-[var(--fg-muted)]">#{session.numericId}</span>
-                <span className="rounded bg-[var(--accent-primary)]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--accent-primary)]">
-                  {session.role}
-                </span>
-                {isVipActive && (
-                  <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
-                    VIP {session.vipTier.toUpperCase()}
-                  </span>
-                )}
-                {session.isPro && (
-                  <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
-                    PRO
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-[var(--fg-secondary)]">
-                <span>UID: {session.uid}</span>
-                <span>·</span>
-                <span>Lv.{session.level} ({session.xp.toLocaleString()} XP)</span>
-                <span>·</span>
-                <span>Following {followingHostUids.length}</span>
-                {session.emailMasked && (
-                  <>
-                    <span>·</span>
-                    <span>{session.emailMasked}</span>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* 3-Currency Trio + Sign Out */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-3 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 font-mono-nums text-xs">
-              <span className="flex items-center gap-1 text-[var(--accent-gold)] font-bold">
-                <Coins className="h-3.5 w-3.5" />
-                {session.coins.toLocaleString()}
-              </span>
-              <span className="flex items-center gap-1 text-sky-700 dark:text-cyan-400 font-bold">
-                <Gem className="h-3.5 w-3.5" />
-                {session.diamonds.toLocaleString()}
-              </span>
-              <span className="flex items-center gap-1 text-[var(--accent-secondary)] font-bold">
-                <Sparkles className="h-3.5 w-3.5" />
-                {session.tokens}
-              </span>
-            </div>
+      {/* Account Identity Header with Cover Banner & Avatar */}
+      <section className="overflow-hidden rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)]">
+        {/* Cover Banner Strip */}
+        <div className="relative h-24 sm:h-28 w-full bg-gradient-to-r from-[var(--accent-primary)]/25 via-[var(--bg-elevated)] to-[var(--accent-secondary)]/25">
+          {(coverUrl || session.coverUrl) && (
+            <img
+              src={coverUrl || session.coverUrl}
+              alt="Profile cover"
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+            />
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" />
+          {onViewPublicProfile && (
             <button
               type="button"
-              onClick={logout}
-              className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] px-3 text-xs font-medium text-[var(--fg-secondary)] hover:text-rose-700 dark:hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
+              onClick={() => onViewPublicProfile(session.uid)}
+              className="absolute right-3 top-3 inline-flex h-8 items-center gap-1.5 rounded-lg bg-black/65 px-2.5 text-[11px] font-semibold text-white hover:bg-black/85 backdrop-blur-xs cursor-pointer"
             >
-              <LogOut className="h-3.5 w-3.5" />
-              <span>Sign Out</span>
+              <Eye className="h-3.5 w-3.5" />
+              <span>Preview Public Biodata</span>
             </button>
-          </div>
+          )}
         </div>
 
-        {/* Sub-Tab Bar */}
-        <div className="mt-4 flex items-center gap-1.5 overflow-x-auto border-t border-[var(--border-hairline)] pt-3 no-scrollbar">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const active = subTab === tab.id;
-            return (
+        <div className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="-mt-10 relative z-10 h-16 w-16 rounded-2xl border-4 border-[var(--bg-surface)] bg-[var(--bg-elevated)] overflow-hidden shadow-md shrink-0 flex items-center justify-center">
+                {avatarUrl || session.avatarUrl ? (
+                  <img
+                    src={avatarUrl || session.avatarUrl}
+                    alt={session.displayName}
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span className="text-xl">{countryFlag(session.countryCode)}</span>
+                )}
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-sm leading-none">{countryFlag(session.countryCode)}</span>
+                  <h1 className="font-display text-lg font-bold">{session.displayName}</h1>
+                  {session.verified && (
+                    <BadgeCheck
+                      className={`h-4 w-4 ${session.partnerVerified ? 'text-emerald-500' : 'text-sky-400'}`}
+                    />
+                  )}
+                  {session.partnerVerified && (
+                    <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                      PARTNER
+                    </span>
+                  )}
+                  <span className="font-mono-nums text-xs text-[var(--fg-muted)]">#{session.numericId}</span>
+                  <span className="rounded bg-[var(--accent-primary)]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--accent-primary)]">
+                    {session.role}
+                  </span>
+                  {isVipActive && (
+                    <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-400">
+                      VIP {session.vipTier.toUpperCase()}
+                    </span>
+                  )}
+                  {session.isPro && (
+                    <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                      PRO
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2.5 text-xs text-[var(--fg-secondary)]">
+                  <span>UID: {session.uid}</span>
+                  <span>·</span>
+                  <span className="font-semibold text-[var(--fg-primary)]">
+                    Lv.{levelInfo.level} <span className={levelInfo.rankAccent}>({levelInfo.rankTitle})</span>
+                  </span>
+                  <span>·</span>
+                  <span className="font-mono-nums">
+                    {levelInfo.xpIntoLevel.toLocaleString()}/{levelInfo.xpRequiredForNext.toLocaleString()} XP to Lv.{Math.min(300, levelInfo.level + 1)}
+                  </span>
+                  <span>·</span>
+                  <span>Following {followingHostUids.length}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* 3-Currency Trio + Sign Out */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-3 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 font-mono-nums text-xs">
+                <span className="flex items-center gap-1 text-[var(--accent-gold)] font-bold">
+                  <Coins className="h-3.5 w-3.5" />
+                  {session.coins.toLocaleString()}
+                </span>
+                <span className="flex items-center gap-1 text-sky-700 dark:text-cyan-400 font-bold">
+                  <Gem className="h-3.5 w-3.5" />
+                  {session.diamonds.toLocaleString()}
+                </span>
+                <span className="flex items-center gap-1 text-[var(--accent-secondary)] font-bold">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {session.tokens}
+                </span>
+              </div>
               <button
-                key={tab.id}
                 type="button"
-                onClick={() => setSubTab(tab.id)}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
-                  active
-                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
-                    : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
-                }`}
+                onClick={logout}
+                className="flex h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] px-3 text-xs font-medium text-[var(--fg-secondary)] hover:text-rose-700 dark:hover:text-rose-400 hover:border-rose-500/40 cursor-pointer"
               >
-                <Icon className="h-3.5 w-3.5" />
-                <span>{tab.label}</span>
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign Out</span>
               </button>
-            );
-          })}
+            </div>
+          </div>
+
+          {/* Sub-Tab Bar */}
+          <div className="mt-4 flex items-center gap-1.5 overflow-x-auto border-t border-[var(--border-hairline)] pt-3 no-scrollbar">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              const active = subTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setSubTab(tab.id)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                    active
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+                      : tab.id === 'earning'
+                        ? 'bg-emerald-500/12 border border-emerald-500/35 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20'
+                        : 'bg-[var(--bg-elevated)] text-[var(--fg-secondary)] hover:text-[var(--fg-primary)]'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
 
-      {/* TAB 1: PROFILE & PRIVACY */}
+      {/* TAB 1: CREATOR BIODATA / CV, AVATAR & COVER PICKER + DAILY HOST TASKS */}
       {subTab === 'profile' && (
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="grid gap-5 xl:grid-cols-3 items-start">
+          {/* Left 2 Columns: Creator Biodata / CV & Public Visibility Builder */}
           <form
             onSubmit={handleSaveProfile}
-            className="lg:col-span-2 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-4"
+            className="xl:col-span-2 rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-5"
           >
-            <h2 className="font-display text-base font-bold">Creator Profile & Visibility</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] pb-3">
+              <div>
+                <h2 className="font-display text-base font-bold">Creator Biodata / CV &amp; Public Visibility</h2>
+                <p className="text-[11px] text-[var(--fg-secondary)]">
+                  Set your profile pic &amp; cover banner from your device or Library, and choose exactly what visitors see.
+                </p>
+              </div>
+              {onViewPublicProfile && (
+                <button
+                  type="button"
+                  onClick={() => onViewPublicProfile(session.uid)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
+                >
+                  <Eye className="h-3.5 w-3.5 text-[var(--accent-secondary)]" />
+                  Preview Public CV
+                </button>
+              )}
+            </div>
+
+            {/* Profile Picture & Cover Banner Pickers (Upload OR Direct From Library) */}
             <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-14 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] overflow-hidden shrink-0 flex items-center justify-center">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="Avatar preview" className="h-full w-full object-cover" />
+                    ) : (
+                      <Camera className="h-5 w-5 text-[var(--fg-muted)]" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold">Profile Picture</div>
+                    <div className="text-[10px] text-[var(--fg-secondary)]">Shown on Home cards &amp; Live Room</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <label className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 text-[11px] font-semibold cursor-pointer hover:border-[var(--accent-primary)]">
+                    <Upload className="h-3 w-3" />
+                    <span>Upload</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => handleUploadImage('avatar', e.target.files?.[0])}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLibraryPickerTarget((t) => (t === 'avatar' ? 'none' : 'avatar'))
+                    }
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--accent-secondary)]/50 bg-[var(--accent-secondary)]/12 px-2.5 text-[11px] font-semibold text-[var(--accent-secondary)] cursor-pointer"
+                  >
+                    <Film className="h-3 w-3" />
+                    <span>From Library ({libraryPhotos.length})</span>
+                  </button>
+                  {avatarUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setAvatarUrl('')}
+                      className="h-8 rounded-lg px-2 text-[11px] text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] p-3 space-y-2.5">
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-24 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] overflow-hidden shrink-0 flex items-center justify-center">
+                    {coverUrl ? (
+                      <img src={coverUrl} alt="Cover preview" className="h-full w-full object-cover" />
+                    ) : (
+                      <ImageIcon className="h-5 w-5 text-[var(--fg-muted)]" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold">Cover Photo</div>
+                    <div className="text-[10px] text-[var(--fg-secondary)]">Header banner on your Biodata CV</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <label className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 text-[11px] font-semibold cursor-pointer hover:border-[var(--accent-primary)]">
+                    <Upload className="h-3 w-3" />
+                    <span>Upload</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => handleUploadImage('cover', e.target.files?.[0])}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLibraryPickerTarget((t) => (t === 'cover' ? 'none' : 'cover'))
+                    }
+                    className="inline-flex h-8 items-center gap-1 rounded-lg border border-[var(--accent-secondary)]/50 bg-[var(--accent-secondary)]/12 px-2.5 text-[11px] font-semibold text-[var(--accent-secondary)] cursor-pointer"
+                  >
+                    <Film className="h-3 w-3" />
+                    <span>From Library ({libraryPhotos.length})</span>
+                  </button>
+                  {coverUrl && (
+                    <button
+                      type="button"
+                      onClick={() => setCoverUrl('')}
+                      className="h-8 rounded-lg px-2 text-[11px] text-rose-700 dark:text-rose-400 hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Direct Library Photo Picker Strip */}
+            {libraryPickerTarget !== 'none' && (
+              <div className="rounded-xl border border-[var(--accent-secondary)]/50 bg-[var(--bg-canvas)] p-3 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-[var(--accent-secondary)]">
+                    Pick {libraryPickerTarget === 'avatar' ? 'Profile Picture' : 'Cover Photo'} from Studio Library
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLibraryPickerTarget('none')}
+                    className="text-[11px] text-[var(--fg-muted)] hover:text-[var(--fg-primary)] cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+                {libraryPhotos.length === 0 ? (
+                  <p className="text-[11px] text-[var(--fg-secondary)]">
+                    No photos saved in your Studio Library yet. Capture a snapshot in Camera Studio or import a photo in Library!
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                    {libraryPhotos.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          if (libraryPickerTarget === 'avatar') setAvatarUrl(item.url);
+                          else setCoverUrl(item.url);
+                          setLibraryPickerTarget('none');
+                          pushToast(
+                            `Selected "${item.label}" as ${libraryPickerTarget === 'avatar' ? 'Profile Pic' : 'Cover Photo'}. Click Save to publish!`,
+                            'info'
+                          );
+                        }}
+                        className="group relative aspect-square overflow-hidden rounded-lg border border-[var(--border-hairline)] hover:border-[var(--accent-primary)] cursor-pointer"
+                      >
+                        <img src={item.url} alt={item.label} className="h-full w-full object-cover" />
+                        <span className="absolute inset-x-0 bottom-0 bg-black/70 px-1 py-0.5 text-[9px] text-white truncate">
+                          {item.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Biodata / CV Structured Fields */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="space-y-1 text-xs sm:col-span-2">
+                <span className="text-[var(--fg-secondary)]">Creator Headline / Role Title (CV Summary)</span>
+                <input
+                  value={headline}
+                  onChange={(e) => setHeadline(e.target.value)}
+                  placeholder="e.g. Live Gaming Host · Dual-Cam Storyteller · Music Producer"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
               <label className="space-y-1 text-xs">
-                <span className="text-[var(--fg-secondary)]">Country & Flag</span>
+                <span className="text-[var(--fg-secondary)]">Country &amp; Flag</span>
                 <select
                   value={countryCode}
                   onChange={(e) => setCountryCode(e.target.value)}
@@ -575,8 +935,49 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                   ))}
                 </select>
               </label>
+
               <label className="space-y-1 text-xs">
-                <span className="text-[var(--fg-secondary)]">Hobbies / Tags</span>
+                <span className="text-[var(--fg-secondary)]">City / Location</span>
+                <input
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g. Mumbai, India / Austin, TX"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
+              <label className="space-y-1 text-xs">
+                <span className="text-[var(--fg-secondary)]">Languages Spoken</span>
+                <input
+                  value={languages}
+                  onChange={(e) => setLanguages(e.target.value)}
+                  placeholder="e.g. English, Hindi, Spanish"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
+              <label className="space-y-1 text-xs">
+                <span className="text-[var(--fg-secondary)]">Broadcast Schedule</span>
+                <input
+                  value={schedule}
+                  onChange={(e) => setSchedule(e.target.value)}
+                  placeholder="e.g. Mon–Sat · 8:00 PM IST"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
+              <label className="space-y-1 text-xs sm:col-span-2">
+                <span className="text-[var(--fg-secondary)]">Skills &amp; Specialties (comma-separated CV tags)</span>
+                <input
+                  value={skills}
+                  onChange={(e) => setSkills(e.target.value)}
+                  placeholder="e.g. ST Strike 3D, Acoustic Guitar, Podcast Hosting, Color Grading"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
+              <label className="space-y-1 text-xs">
+                <span className="text-[var(--fg-secondary)]">Hobbies / Interests</span>
                 <input
                   value={hobbies}
                   onChange={(e) => setHobbies(e.target.value)}
@@ -584,6 +985,18 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                   className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
                 />
               </label>
+
+              <label className="space-y-1 text-xs">
+                <span className="text-[var(--fg-secondary)]">Portfolio / Social Website (HTTPS)</span>
+                <input
+                  type="url"
+                  value={websiteUrl}
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  placeholder="https://your-portfolio.com"
+                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
+                />
+              </label>
+
               <label className="space-y-1 text-xs">
                 <span className="text-[var(--fg-secondary)]">Age</span>
                 <input
@@ -593,6 +1006,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                   className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
                 />
               </label>
+
               <label className="space-y-1 text-xs">
                 <span className="text-[var(--fg-secondary)]">Gender</span>
                 <input
@@ -603,106 +1017,190 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                 />
               </label>
             </div>
+
             <label className="block space-y-1 text-xs">
-              <span className="text-[var(--fg-secondary)]">Bio</span>
+              <span className="text-[var(--fg-secondary)]">Experience &amp; Bio</span>
               <textarea
                 rows={3}
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
-                placeholder="Tell your live community about your schedule..."
+                placeholder="Share your creator background, live show format, and achievements..."
                 className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs text-[var(--fg-primary)]"
               />
             </label>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1 text-xs">
-              {[
-                { label: 'Show Age', val: showAge, set: setShowAge },
-                { label: 'Show Gender', val: showGender, set: setShowGender },
-                { label: 'Show Followers', val: showFollowers, set: setShowFollowers },
-                { label: 'Show Room Visits', val: showVisits, set: setShowVisits },
-                { label: 'Allow Direct DMs', val: allowDm, set: setAllowDm },
-              ].map((t) => (
-                <label
-                  key={t.label}
-                  className="flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={t.val}
-                    onChange={(e) => t.set(e.target.checked)}
-                    className="accent-[var(--accent-primary)]"
-                  />
-                  <span>{t.label}</span>
-                </label>
-              ))}
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 pt-1">
-              <label className="space-y-1 text-xs">
-                <span className="text-[var(--fg-secondary)]">Sponsor / Tip Banner Position</span>
-                <select
-                  value={bannerPos}
-                  onChange={(e) => setBannerPos(e.target.value as 'top' | 'lower' | 'corner')}
-                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-                >
-                  <option value="top">Top Overlay</option>
-                  <option value="lower">Lower Third</option>
-                  <option value="corner">Corner Dock</option>
-                </select>
-              </label>
-              <label className="space-y-1 text-xs">
-                <span className="text-[var(--fg-secondary)]">Banner Dimension</span>
-                <select
-                  value={bannerSize}
-                  onChange={(e) => setBannerSize(e.target.value as '728x90' | '468x60' | '300x250')}
-                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-                >
-                  <option value="728x90">Leaderboard (728×90)</option>
-                  <option value="468x60">Standard (468×60)</option>
-                  <option value="300x250">Card (300×250)</option>
-                </select>
-              </label>
+            {/* Granular Public Visibility Controls (Assign What People See) */}
+            <div className="space-y-2 pt-1">
+              <div className="text-xs font-bold text-[var(--fg-primary)]">
+                Public Profile Visibility (Choose What Visitors Can See)
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                {[
+                  { label: 'Show Bio / Experience', val: showBio, set: setShowBio },
+                  { label: 'Show Location', val: showLocation, set: setShowLocation },
+                  { label: 'Show Languages', val: showLanguages, set: setShowLanguages },
+                  { label: 'Show Skills Tags', val: showSkills, set: setShowSkills },
+                  { label: 'Show Live Schedule', val: showSchedule, set: setShowSchedule },
+                  { label: 'Show Hobbies', val: showHobbies, set: setShowHobbies },
+                  { label: 'Show Website Link', val: showWebsite, set: setShowWebsite },
+                  { label: 'Show Age', val: showAge, set: setShowAge },
+                  { label: 'Show Gender', val: showGender, set: setShowGender },
+                  { label: 'Show Followers', val: showFollowers, set: setShowFollowers },
+                  { label: 'Show Room Visits', val: showVisits, set: setShowVisits },
+                  { label: 'Allow Direct DMs', val: allowDm, set: setAllowDm },
+                ].map((item) => (
+                  <label
+                    key={item.label}
+                    className="flex items-center gap-2 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-2.5 py-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={item.val}
+                      onChange={(e) => item.set(e.target.checked)}
+                      className="accent-[var(--accent-primary)]"
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </label>
+                ))}
+              </div>
             </div>
 
             <button
               type="submit"
               disabled={busy}
-              className="h-9 rounded-lg bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
+              className="h-10 rounded-xl bg-[var(--accent-primary)] px-5 text-xs font-bold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
             >
-              {busy ? 'Saving...' : 'Save Profile & Preferences'}
+              {busy ? 'Saving...' : 'Save Biodata, Photos & Visibility'}
             </button>
           </form>
 
-          {/* Blocklist Card */}
-          <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-3">
-            <h2 className="flex items-center gap-2 font-display text-base font-bold">
-              <Ban className="h-4 w-4 text-rose-700 dark:text-rose-400" />
-              <span>Room Blocklist ({blockedUsers.length}/200)</span>
-            </h2>
-            {blockedUsers.length === 0 ? (
-              <p className="text-xs text-[var(--fg-secondary)]">No blocked users. You can block disruptive users from any live room you host.</p>
-            ) : (
-              <div className="space-y-2 max-h-72 overflow-y-auto">
-                {blockedUsers.map((b) => (
-                  <div
-                    key={b.uid}
-                    className="flex items-center justify-between rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-                  >
-                    <div>
-                      <div className="font-semibold">{b.displayName}</div>
-                      <div className="text-[10px] text-[var(--fg-muted)]">{b.reason}</div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleUnblockUser(b.uid)}
-                      className="rounded border border-[var(--border-hairline)] px-2 py-1 text-[10px] hover:border-emerald-400 cursor-pointer"
-                    >
-                      Unblock
-                    </button>
-                  </div>
-                ))}
+          {/* Right Column: Daily Host Tasks + Room Blocklist */}
+          <div className="space-y-5">
+            {/* Daily Host Tasks Panel */}
+            <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-3.5">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="flex items-center gap-2 font-display text-base font-bold">
+                    <ClipboardCheck className="h-4 w-4 text-[var(--accent-secondary)]" />
+                    <span>Daily Host Tasks</span>
+                  </h2>
+                  <p className="text-[11px] text-[var(--fg-secondary)]">
+                    Complete daily creator goals to level up &amp; earn XP, Coins &amp; Tokens.
+                  </p>
+                </div>
+                <span className="font-mono-nums text-xs font-bold text-[var(--accent-secondary)]">
+                  {dailyTasks.filter((t) => t.claimed).length}/{dailyTasks.length || 6}
+                </span>
               </div>
-            )}
+
+              <div className="space-y-2.5">
+                {dailyTasks.map((task) => {
+                  const pct = Math.min(100, Math.round((task.progress / Math.max(1, task.target)) * 100));
+                  return (
+                    <div
+                      key={task.id}
+                      className={`rounded-xl border p-3 space-y-2 ${
+                        task.claimed
+                          ? 'border-emerald-500/30 bg-emerald-500/8'
+                          : task.completed
+                            ? 'border-[var(--accent-secondary)]/55 bg-[var(--accent-secondary)]/8'
+                            : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)]'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-xs font-bold text-[var(--fg-primary)]">{task.title}</div>
+                          <div className="text-[11px] text-[var(--fg-secondary)] leading-snug">
+                            {task.description}
+                          </div>
+                        </div>
+                        <span className="font-mono-nums text-[10px] font-bold text-[var(--fg-muted)] shrink-0">
+                          {task.progress}/{task.target}
+                        </span>
+                      </div>
+
+                      <div className="h-1.5 w-full rounded-full bg-[var(--bg-elevated)] overflow-hidden">
+                        <div
+                          className={`h-full transition-all ${
+                            task.claimed
+                              ? 'bg-emerald-500'
+                              : task.completed
+                                ? 'bg-[var(--accent-secondary)]'
+                                : 'bg-[var(--accent-primary)]'
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-1.5 font-mono-nums text-[10px]">
+                          <span className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-bold text-[var(--accent-primary)]">
+                            +{task.rewardXp} XP
+                          </span>
+                          <span className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-bold text-[var(--accent-gold)]">
+                            +{task.rewardCoins}c
+                          </span>
+                          <span className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5 font-bold text-[var(--accent-secondary)]">
+                            +{task.rewardTokens}T
+                          </span>
+                        </div>
+
+                        {task.claimed ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Claimed
+                          </span>
+                        ) : task.completed ? (
+                          <button
+                            type="button"
+                            disabled={claimingTaskId === task.id}
+                            onClick={() => handleClaimDailyTask(task.id)}
+                            className="h-7 rounded-lg bg-emerald-600 px-2.5 text-[11px] font-bold text-white hover:bg-emerald-500 cursor-pointer"
+                          >
+                            {claimingTaskId === task.id ? '...' : 'Claim Reward'}
+                          </button>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-[var(--fg-muted)]">In Progress</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* Blocklist Card */}
+            <div className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-3">
+              <h2 className="flex items-center gap-2 font-display text-base font-bold">
+                <Ban className="h-4 w-4 text-rose-700 dark:text-rose-400" />
+                <span>Room Blocklist ({blockedUsers.length}/200)</span>
+              </h2>
+              {blockedUsers.length === 0 ? (
+                <p className="text-xs text-[var(--fg-secondary)]">
+                  No blocked users. You can block disruptive users from any live room you host.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {blockedUsers.map((b) => (
+                    <div
+                      key={b.uid}
+                      className="flex items-center justify-between rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
+                    >
+                      <div>
+                        <div className="font-semibold">{b.displayName}</div>
+                        <div className="text-[10px] text-[var(--fg-muted)]">{b.reason}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleUnblockUser(b.uid)}
+                        className="rounded border border-[var(--border-hairline)] px-2 py-1 text-[10px] hover:border-emerald-400 cursor-pointer"
+                      >
+                        Unblock
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -831,30 +1329,65 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
         </div>
       )}
 
-      {/* TAB 3: VIP & LEVELS (0-300) */}
+      {/* TAB 3: VIP & PROGRESSIVE LEVELS (1-300) */}
       {subTab === 'vip' && (
         <div className="space-y-5">
-          <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-3">
+          <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="flex items-center gap-2 font-display text-base font-bold">
-                <Award className="h-4 w-4 text-[var(--accent-secondary)]" />
-                <span>Level {session.level} / 300 Progression</span>
-              </h2>
-              <span className="font-mono-nums text-xs text-[var(--fg-secondary)]">
-                {session.xp.toLocaleString()} Total XP
+              <div>
+                <h2 className="flex items-center gap-2 font-display text-base font-bold">
+                  <Award className="h-4 w-4 text-[var(--accent-secondary)]" />
+                  <span>
+                    Level {levelInfo.level} / 300 · <span className={levelInfo.rankAccent}>{levelInfo.rankTitle}</span>
+                  </span>
+                </h2>
+                <p className="text-[11px] text-[var(--fg-secondary)]">
+                  Progressive difficulty curve: fast early levels, steeper prestige XP requirements every level up!
+                </p>
+              </div>
+              <span className="font-mono-nums text-xs font-semibold text-[var(--fg-primary)]">
+                {levelInfo.xpIntoLevel.toLocaleString()} / {levelInfo.xpRequiredForNext.toLocaleString()} XP ({levelInfo.progressPct}%)
               </span>
             </div>
             <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--bg-elevated)]">
               <div
-                className="h-full rounded-full bg-[var(--accent-primary)] transition-all"
-                style={{ width: `${levelProgress}%` }}
+                className="h-full rounded-full bg-gradient-to-r from-[var(--accent-primary)] to-[var(--accent-gold)] transition-all"
+                style={{ width: `${levelInfo.progressPct}%` }}
               />
             </div>
+
+            {/* Progressive Curve Milestones */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {LEVEL_MILESTONES.map((m) => {
+                const reached = levelInfo.level >= m.level;
+                return (
+                  <div
+                    key={m.level}
+                    className={`rounded-xl border p-2.5 text-xs ${
+                      reached
+                        ? 'border-emerald-500/40 bg-emerald-500/10'
+                        : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between font-mono-nums">
+                      <span className="font-bold text-[var(--fg-primary)]">Lv.{m.level}</span>
+                      {reached && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />}
+                    </div>
+                    <div className={`text-[11px] font-semibold ${m.accent}`}>{m.rank}</div>
+                    <div className="mt-1 font-mono-nums text-[10px] text-[var(--fg-muted)]">
+                      {m.totalXp.toLocaleString()} total XP
+                      {m.nextStepXp > 0 ? ` · +${m.nextStepXp.toLocaleString()} next` : ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             <div className="grid gap-2 sm:grid-cols-4 text-[11px] text-[var(--fg-secondary)]">
+              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Daily Host Tasks: <strong className="text-[var(--fg-primary)]">+45–150 XP</strong></div>
+              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Watch 1 minute: <strong className="text-[var(--fg-primary)]">+2 Tokens +6 XP</strong></div>
+              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Send gift: <strong className="text-[var(--fg-primary)]">+XP / coins</strong></div>
               <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Chat message: <strong className="text-[var(--fg-primary)]">+1 XP</strong></div>
-              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Watch 1 minute: <strong className="text-[var(--fg-primary)]">+1 Token +5 XP</strong></div>
-              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Send gift: <strong className="text-[var(--fg-primary)]">+2 XP / coin</strong></div>
-              <div className="rounded-lg bg-[var(--bg-elevated)] p-2.5">Daily Check-In: <strong className="text-[var(--fg-primary)]">+20–50 XP</strong></div>
             </div>
           </section>
 
@@ -904,14 +1437,16 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
         </div>
       )}
 
-      {/* TAB 4: EARNING, PAYOUTS & MONETAG */}
+      {/* TAB 4: JOIN FREE TO EARN (MONETAG + A-ADS + GUIDELINE + DIAMOND CASH-OUT) */}
       {subTab === 'earning' && (
-        <div className="grid gap-5 lg:grid-cols-2">
+        <div className="space-y-6">
+          <FreeToEarnHub />
+
           {/* Diamond Cash-Out */}
           <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-4">
             <div>
               <h2 className="flex items-center gap-2 font-display text-base font-bold">
-                <Gem className="h-4 w-4 text-cyan-400" />
+                <Gem className="h-4 w-4 text-sky-600 dark:text-cyan-400" />
                 <span>Diamond Cash-Out (1,000 D = $1.00)</span>
               </h2>
               <p className="text-xs text-[var(--fg-secondary)]">
@@ -919,7 +1454,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
               </p>
             </div>
             <form onSubmit={handleRequestPayout} className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <label className="space-y-1 text-xs">
                   <span className="text-[var(--fg-secondary)]">Diamonds (Avail: {session.diamonds.toLocaleString()})</span>
                   <input
@@ -943,17 +1478,17 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                     <option value="Bank Wire">Bank Wire / SWIFT</option>
                   </select>
                 </label>
+                <label className="space-y-1 text-xs">
+                  <span className="text-[var(--fg-secondary)]">Destination Email / Wallet Address</span>
+                  <input
+                    required
+                    value={payoutDestination}
+                    onChange={(e) => setPayoutDestination(e.target.value)}
+                    placeholder="creator@example.com or TWallet..."
+                    className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
+                  />
+                </label>
               </div>
-              <label className="block space-y-1 text-xs">
-                <span className="text-[var(--fg-secondary)]">Destination Email / Wallet Address</span>
-                <input
-                  required
-                  value={payoutDestination}
-                  onChange={(e) => setPayoutDestination(e.target.value)}
-                  placeholder="creator@example.com or TWallet..."
-                  className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-                />
-              </label>
               <button
                 type="submit"
                 disabled={busy}
@@ -990,55 +1525,6 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                 ))}
               </div>
             )}
-          </section>
-
-          {/* Monetag Free-Tip Onboarding */}
-          <section className="rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 font-display text-base font-bold">
-                <ExternalLink className="h-4 w-4 text-[var(--accent-secondary)]" />
-                <span>Monetag Free-Tip Program</span>
-              </h2>
-              <span className="rounded bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] font-bold uppercase text-[var(--accent-gold)]">
-                Status: {session.monetagStatus}
-              </span>
-            </div>
-            <p className="text-xs text-[var(--fg-secondary)] leading-relaxed">
-              Let viewers support your live streams for free via your verified Monetag direct link. Once Staff verifies
-              your Publisher ID, a Free-Tip button appears inside your live room.
-            </p>
-            <form onSubmit={handleSubmitMonetag} className="space-y-3">
-              <input
-                required
-                type="email"
-                value={monetagEmail}
-                onChange={(e) => setMonetagEmail(e.target.value)}
-                placeholder="Monetag Publisher Email"
-                className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-              />
-              <input
-                required
-                value={monetagPubId}
-                onChange={(e) => setMonetagPubId(e.target.value)}
-                placeholder="Monetag Publisher ID (e.g. PUB-88241)"
-                className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-              />
-              <input
-                required
-                type="url"
-                value={monetagTipUrl}
-                onChange={(e) => setMonetagTipUrl(e.target.value)}
-                placeholder="https://monetag.example/tip/your-zone"
-                className="w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
-              />
-              <button
-                type="submit"
-                disabled={busy}
-                className="h-9 rounded-lg bg-[var(--accent-primary)] px-4 text-xs font-bold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
-              >
-                Submit for Staff Verification
-              </button>
-            </form>
           </section>
         </div>
       )}
@@ -1185,6 +1671,7 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                 ['payouts', `Payouts (${staffData?.payouts.length || 0})`],
                 ['resets', `Resets (${staffData?.resets.length || 0})`],
                 ['monetag', `Monetag (${staffData?.monetagQueue.length || 0})`],
+                ['aads', `A-ADS (${staffData?.aadsQueue?.length || 0})`],
                 ['threat', 'Threat Console'],
                 ['audit', `Audit Ring (${staffData?.auditLogs.length || 0})`],
               ] as const
@@ -1349,15 +1836,25 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                       key={m.uid}
                       className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] p-3 text-xs"
                     >
-                      <div>
-                        <div className="font-semibold">{m.displayName} · Pub {m.publisherId} · {m.status.toUpperCase()}</div>
-                        <div className="text-[11px] text-[var(--fg-secondary)]">{m.tipUrl}</div>
+                      <div className="min-w-0">
+                        <div className="font-semibold">
+                          {m.displayName} ({m.uid} {m.numericId ? `#${m.numericId}` : ''}) · Pub {m.publisherId} ·{' '}
+                          {m.status.toUpperCase()}
+                        </div>
+                        <div className="text-[11px] text-[var(--fg-secondary)] truncate">
+                          {m.email ? `${m.email} · ` : ''}
+                          {m.tipUrl}
+                        </div>
                       </div>
-                      <div className="flex gap-1.5">
+                      <div className="flex gap-1.5 shrink-0">
                         <button
                           type="button"
                           onClick={() =>
-                            handleStaffAction(`/api/staff/monetag/${m.uid}/verify`, { status: 'verified' }, 'Creator Monetag verified!')
+                            handleStaffAction(
+                              `/api/staff/monetag/${m.uid}/verify`,
+                              { status: 'verified' },
+                              'Creator Monetag verified & Partner Badge granted!'
+                            )
                           }
                           className="rounded bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-black cursor-pointer"
                         >
@@ -1366,7 +1863,61 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                         <button
                           type="button"
                           onClick={() =>
-                            handleStaffAction(`/api/staff/monetag/${m.uid}/verify`, { status: 'rejected' }, 'Monetag application rejected.')
+                            handleStaffAction(
+                              `/api/staff/monetag/${m.uid}/verify`,
+                              { status: 'rejected' },
+                              'Monetag application rejected.'
+                            )
+                          }
+                          className="rounded bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                ))}
+
+              {staffSection === 'aads' &&
+                (!staffData.aadsQueue || staffData.aadsQueue.length === 0 ? (
+                  <p className="text-xs text-[var(--fg-secondary)]">No A-ADS Custom Banner applications.</p>
+                ) : (
+                  staffData.aadsQueue.map((a) => (
+                    <div
+                      key={a.uid}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] p-3 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-semibold">
+                          {a.displayName} ({a.uid} {a.numericId ? `#${a.numericId}` : ''}) · Unit #{a.unitId} ·{' '}
+                          {a.status.toUpperCase()}
+                        </div>
+                        <div className="text-[11px] text-[var(--fg-secondary)] truncate">
+                          {a.email ? `${a.email} · ` : ''}Placement: {a.bannerPos} ({a.bannerSize})
+                        </div>
+                      </div>
+                      <div className="flex gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleStaffAction(
+                              `/api/staff/aads/${a.uid}/verify`,
+                              { status: 'verified' },
+                              'Creator A-ADS Banner verified & Partner Badge granted!'
+                            )
+                          }
+                          className="rounded bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-black cursor-pointer"
+                        >
+                          Verify
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleStaffAction(
+                              `/api/staff/aads/${a.uid}/verify`,
+                              { status: 'rejected' },
+                              'A-ADS application rejected.'
+                            )
                           }
                           className="rounded bg-rose-500 px-2.5 py-1 text-[11px] font-bold text-white cursor-pointer"
                         >
@@ -1409,13 +1960,13 @@ export const MeHub: React.FC<MeHubProps> = ({ onOpenLogin, onOpenTestMode }) => 
                       </button>
                     </div>
                   </div>
-                  {staffData.threat.activeBlocks.length === 0 ? (
+                  {((staffData.threat.activeBlocks ?? staffData.threat.entries ?? []).length === 0) ? (
                     <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
                       <CheckCircle2 className="h-4 w-4" />
                       <span>Zero actively blocked threat keys.</span>
                     </div>
                   ) : (
-                    staffData.threat.activeBlocks.map((b) => (
+                    (staffData.threat.activeBlocks ?? staffData.threat.entries ?? []).map((b) => (
                       <div
                         key={b.key}
                         className="flex items-center justify-between rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-3 py-2 text-xs"
