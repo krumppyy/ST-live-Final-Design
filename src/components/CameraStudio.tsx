@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowLeftRight,
+  Ban,
   Bluetooth,
   Compass,
   Download,
@@ -12,17 +13,21 @@ import {
   Grid3X3,
   HardDrive,
   LayoutGrid,
+  Lock,
   Mic,
   MicOff,
   Radio,
   Ratio,
   RefreshCw,
+  Save,
   Share2,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Sun,
   Timer,
   Trash2,
+  Unlock,
   Upload,
   Wand2,
   Wifi,
@@ -80,6 +85,25 @@ type DrawerTab =
 const SHUTTER_SPEEDS = ['1/30', '1/60', '1/125', '1/250', '1/500', '1/1000', '1/4000'];
 const FLASH_POWERS = ['1/1', '1/2', '1/4', '1/8', '1/16', '1/32', '1/64', '1/128'];
 const REEL_DURATIONS = [15, 20, 30, 60, 90] as const;
+const CUSTOM_FACE_PRESETS_KEY = 'stlive_custom_face_presets_v1';
+
+interface CustomFacePreset {
+  id: string;
+  name: string;
+  beautyProfile: BeautyProfile;
+  skinBrightAuto: boolean;
+  skinBrightManual: number;
+  faceSmooth: number;
+  faceGlow: number;
+  faceSlim: number;
+  faceJaw: number;
+  faceChin: number;
+  bodySlim: number;
+  eyeBright: number;
+  skinTone: number;
+  faceRosy: number;
+  faceVignette: number;
+}
 
 export const CameraStudio: React.FC<CameraStudioProps> = ({
   onBack,
@@ -107,8 +131,9 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [drawer, setDrawer] = useState<DrawerTab>('none');
   const [collageOpen, setCollageOpen] = useState(false);
 
-  // Aspect Ratio (Pictures, Videos & Reels — includes 20s Quick Clip preset G-052)
+  // Aspect Ratio + Screen Crop-Lock (Pictures, Videos & Reels — includes 20s Quick Clip preset G-052)
   const [aspectRatio, setAspectRatio] = useState<AspectRatioId>('full');
+  const [aspectLocked, setAspectLocked] = useState<boolean>(false);
   const [reelDuration, setReelDuration] = useState<15 | 20 | 30 | 60 | 90>(20);
   const [reelSpeed, setReelSpeed] = useState<0.5 | 1 | 1.5 | 2>(1);
 
@@ -172,6 +197,17 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [skinBrightAuto, setSkinBrightAuto] = useState(false);
   const [skinBrightManual, setSkinBrightManual] = useState(0); // 0 .. 100 (for dark-tone brightening)
   const [bodySlim, setBodySlim] = useState(0);
+  const [customFacePresets, setCustomFacePresets] = useState<CustomFacePreset[]>(() => {
+    try {
+      const raw = localStorage.getItem(CUSTOM_FACE_PRESETS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.slice(0, 12) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [newFacePresetName, setNewFacePresetName] = useState('');
   const [arOverlay, setArOverlay] = useState<ArOverlayId>('none');
   const [screenShareActive, setScreenShareActive] = useState(false);
   const screenVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -543,12 +579,12 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
     };
   }, [camMode, brollMode, activeCamIdx]);
 
-  // Auto-select 9:16 social format when entering Reels mode
+  // Auto-select 9:16 social format when entering Reels mode (unless Screen Crop-Lock is ON)
   useEffect(() => {
-    if (camMode === 'reels' && aspectRatio === 'full') {
+    if (!aspectLocked && camMode === 'reels' && aspectRatio === 'full') {
       setAspectRatio('9:16');
     }
-  }, [camMode, aspectRatio]);
+  }, [camMode, aspectRatio, aspectLocked]);
 
   // Recording Timer + Auto-stop at Reels Duration Limit
   useEffect(() => {
@@ -1713,8 +1749,82 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   };
 
   const cycleAspect = () => {
+    if (aspectLocked) {
+      pushToast(`Aspect ratio (${aspectRatio === 'full' ? 'FULL' : aspectRatio}) is Crop-Locked. Tap Lock to unlock.`, 'info');
+      return;
+    }
     const ids = ASPECT_RATIOS.map((a) => a.id);
     setAspectRatio((cur) => ids[(ids.indexOf(cur) + 1) % ids.length]);
+  };
+
+  const persistFacePresets = (next: CustomFacePreset[]) => {
+    setCustomFacePresets(next);
+    try {
+      localStorage.setItem(CUSTOM_FACE_PRESETS_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota */
+    }
+  };
+
+  const saveCustomFacePreset = () => {
+    if (customFacePresets.length >= 12) {
+      pushToast('Maximum 12 custom Face Studio presets reached. Delete one to save a new slot.', 'error');
+      return;
+    }
+    const cleanName = newFacePresetName.trim().slice(0, 22) || `Look ${customFacePresets.length + 1}`;
+    const entry: CustomFacePreset = {
+      id: `fp-${Date.now()}`,
+      name: cleanName,
+      beautyProfile,
+      skinBrightAuto,
+      skinBrightManual,
+      faceSmooth,
+      faceGlow,
+      faceSlim,
+      faceJaw,
+      faceChin,
+      bodySlim,
+      eyeBright,
+      skinTone,
+      faceRosy,
+      faceVignette,
+    };
+    persistFacePresets([...customFacePresets, entry]);
+    setNewFacePresetName('');
+    pushToast(`Saved Face Studio preset "${cleanName}" (${customFacePresets.length + 1}/12).`, 'success');
+  };
+
+  const applyCustomFacePreset = (p: CustomFacePreset) => {
+    setBeautyProfile(p.beautyProfile);
+    setSkinBrightAuto(p.skinBrightAuto);
+    setSkinBrightManual(p.skinBrightManual);
+    setFaceSmooth(p.faceSmooth);
+    setFaceGlow(p.faceGlow);
+    setFaceSlim(p.faceSlim);
+    setFaceJaw(p.faceJaw);
+    setFaceChin(p.faceChin);
+    setBodySlim(p.bodySlim);
+    setEyeBright(p.eyeBright);
+    setSkinTone(p.skinTone);
+    setFaceRosy(p.faceRosy);
+    setFaceVignette(p.faceVignette);
+    pushToast(`Applied Face Studio preset "${p.name}".`, 'info');
+  };
+
+  const deleteCustomFacePreset = (id: string) => {
+    persistFacePresets(customFacePresets.filter((p) => p.id !== id));
+  };
+
+  const killAllArAndOverlays = () => {
+    setArOverlay('none');
+    setStudioOverlayCaption('');
+    if (screenShareActive) {
+      screenStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+      screenStreamRef.current = null;
+      if (screenVideoRef.current) screenVideoRef.current.srcObject = null;
+      setScreenShareActive(false);
+    }
+    pushToast('All AR layers, stickers, screen-share & captions turned OFF.', 'info');
   };
 
   const cycleTuningMode = () => {
@@ -1899,19 +2009,44 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
             {tuningMode.toUpperCase()}
           </button>
 
-          <button
-            type="button"
-            onClick={cycleAspect}
-            title="Aspect Ratio"
-            className="inline-flex h-7 sm:h-8 items-center gap-1 rounded-full bg-black/55 border border-white/15 px-2 text-[10px] font-mono-nums font-semibold text-white/90 cursor-pointer"
-          >
-            <Ratio className="h-3 w-3 text-[#A3E635]" />
-            <span>{aspectRatio === 'full' ? 'FULL' : aspectRatio}</span>
-          </button>
+          <div className="inline-flex h-7 sm:h-8 items-center rounded-full bg-black/55 border border-white/15 overflow-hidden text-[10px] font-mono-nums font-semibold text-white/90">
+            <button
+              type="button"
+              onClick={cycleAspect}
+              title={aspectLocked ? 'Aspect Ratio (Crop-Locked)' : 'Aspect Ratio'}
+              className="inline-flex h-full items-center gap-1 px-2 hover:bg-white/10 cursor-pointer"
+            >
+              <Ratio className="h-3 w-3 text-[#A3E635]" />
+              <span>{aspectRatio === 'full' ? 'FULL' : aspectRatio}</span>
+            </button>
+            <span className="h-3 w-px bg-white/20" />
+            <button
+              type="button"
+              onClick={() => {
+                setAspectLocked((prev) => {
+                  const next = !prev;
+                  pushToast(
+                    next
+                      ? `Screen Crop-Lock ON (${aspectRatio === 'full' ? 'FULL' : aspectRatio})`
+                      : 'Screen Crop-Lock OFF',
+                    'info'
+                  );
+                  return next;
+                });
+              }}
+              aria-label={aspectLocked ? 'Unlock Screen Crop' : 'Lock Screen Crop'}
+              title={aspectLocked ? 'Screen Crop-Lock ON' : 'Lock Screen Crop'}
+              className={`flex h-full items-center justify-center px-1.5 cursor-pointer ${
+                aspectLocked ? 'bg-[#E8C86A]/25 text-[#E8C86A]' : 'text-white/60 hover:text-white'
+              }`}
+            >
+              {aspectLocked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+            </button>
+          </div>
         </div>
 
-        {/* Center: Resolution (480p..8K) / FPS / REC */}
-        <div className="flex items-center gap-1">
+        {/* Center: Resolution (480p..8K) / FPS / REC + Camera Safety Label */}
+        <div className="flex items-center gap-1.5">
           {isRecording ? (
             <div className="inline-flex h-7 sm:h-8 items-center gap-1.5 rounded-full bg-[#D90429] px-2.5 text-[10px] sm:text-[11px] font-mono-nums font-bold">
               <span>
@@ -1939,6 +2074,16 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
                 {fps}
               </button>
             </div>
+          )}
+
+          {cameraStatus === 'live' && (
+            <span
+              title="Camera tracks stop immediately when leaving studio or ending broadcast"
+              className="hidden md:inline-flex h-7 items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-950/65 px-2.5 text-[9px] font-semibold text-emerald-200"
+            >
+              <ShieldCheck className="h-3 w-3 text-emerald-400" />
+              <span>Cam Live · End Kills Tracks</span>
+            </span>
           )}
         </div>
 
@@ -2297,13 +2442,77 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
                   </label>
                 ))}
               </div>
+
+              {/* 12 Custom Face Studio Presets (Save / Load / Delete) */}
+              <div className="border-t border-white/15 pt-2 space-y-1.5">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="font-semibold uppercase tracking-wider text-white/65">
+                    Custom Face Presets ({customFacePresets.length}/12)
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    maxLength={22}
+                    value={newFacePresetName}
+                    onChange={(e) => setNewFacePresetName(e.target.value)}
+                    placeholder="Preset name (e.g. Night Glam)..."
+                    className="h-7 flex-1 rounded-lg border border-white/15 bg-white/10 px-2 text-[11px] text-white placeholder:text-white/45 outline-none focus:border-[#A3E635]"
+                  />
+                  <button
+                    type="button"
+                    onClick={saveCustomFacePreset}
+                    disabled={customFacePresets.length >= 12}
+                    className="inline-flex h-7 items-center gap-1 rounded-lg bg-[#A3E635] px-2.5 text-[10px] font-bold text-black hover:opacity-90 disabled:opacity-40 cursor-pointer"
+                  >
+                    <Save className="h-3 w-3" />
+                    <span>Save</span>
+                  </button>
+                </div>
+                {customFacePresets.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {customFacePresets.map((fp) => (
+                      <div
+                        key={fp.id}
+                        className="inline-flex items-center rounded-full border border-white/15 bg-white/10 text-[10px] text-white overflow-hidden"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => applyCustomFacePreset(fp)}
+                          className="px-2 py-0.5 font-semibold hover:bg-[#A3E635] hover:text-black cursor-pointer"
+                        >
+                          {fp.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteCustomFacePreset(fp.id)}
+                          aria-label={`Delete ${fp.name}`}
+                          className="px-1.5 py-0.5 text-white/60 hover:bg-rose-600 hover:text-white cursor-pointer"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <div className="space-y-2.5 text-[11px]">
-              <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-white/60">
                   Live AR Layer
                 </span>
+                <button
+                  type="button"
+                  onClick={killAllArAndOverlays}
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/20 px-2 text-[10px] font-bold text-rose-200 hover:bg-rose-600 hover:text-white cursor-pointer"
+                >
+                  <Ban className="h-3 w-3" />
+                  <span>All AR / Stickers OFF</span>
+                </button>
+              </div>
+              <div className="space-y-1">
                 <div className="grid grid-cols-5 gap-1 text-[10px]">
                   {(
                     [

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -222,10 +222,16 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
   const [nowTick, setNowTick] = useState(Date.now());
   const [showTipGuide, setShowTipGuide] = useState(false);
   const [showAadsGuide, setShowAadsGuide] = useState(false);
+  const [coHostLocalStream, setCoHostLocalStream] = useState<MediaStream | null>(null);
+  const [coHostRemoteStreams, setCoHostRemoteStreams] = useState<Record<string, MediaStream>>({});
+  const [coHostPublishing, setCoHostPublishing] = useState(false);
 
   const gimbal = useGimbal('off');
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const coHostLocalStreamRef = useRef<MediaStream | null>(null);
+  const coHostPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const rtcConfigRef = useRef<RTCConfiguration>({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
   const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -333,12 +339,16 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     return Math.max(1, Math.round(raw * (1 - discountPct / 100)));
   };
 
-  // Record visit + 60s Watch-Minute Token & XP heartbeat
+  // Record visit + 60s Watch-Minute Token, XP & Popular View-Minutes heartbeat
   useEffect(() => {
-    if (!session?.token || !pinUnlocked) return;
-    authFetch(`/api/rooms/${encodeURIComponent(liveStream.id)}/visit`, { method: 'POST' }).catch(() => {});
+    if (!pinUnlocked) return;
+    if (session?.token) {
+      authFetch(`/api/rooms/${encodeURIComponent(liveStream.id)}/visit`, { method: 'POST' }).catch(() => {});
+    }
     const tickTimer = setInterval(async () => {
       try {
+        fetch(`/api/rooms/${encodeURIComponent(liveStream.id)}/heartbeat`, { method: 'POST' }).catch(() => {});
+        if (!session?.token) return;
         const res = await authFetch('/api/economy/watch-tick', { method: 'POST' });
         if (res.ok) {
           const data = await res.json();
@@ -355,10 +365,98 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
 
   // Load dynamic WebRTC STUN/TURN config (G-035)
   useEffect(() => {
-    fetchRtcConfig().then((cfg) => setRtcTurnReady(cfg.turnConfigured)).catch(() => {});
+    fetchRtcConfig()
+      .then((cfg) => {
+        setRtcTurnReady(cfg.turnConfigured);
+        if (cfg.iceServers?.length) {
+          rtcConfigRef.current = { iceServers: cfg.iceServers };
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  // WebSocket Room Subscriptions
+  const stopCoHostMedia = useCallback(() => {
+    coHostLocalStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+    coHostLocalStreamRef.current = null;
+    setCoHostLocalStream(null);
+    setCoHostPublishing(false);
+    coHostPcsRef.current.forEach((pc) => {
+      try {
+        pc.close();
+      } catch {
+        // ignore
+      }
+    });
+    coHostPcsRef.current.clear();
+    setCoHostRemoteStreams({});
+  }, []);
+
+  const getOrCreateCoHostPc = useCallback(
+    (peerUid: string) => {
+      const existing = coHostPcsRef.current.get(peerUid);
+      if (existing) return existing;
+      const pc = new RTCPeerConnection(rtcConfigRef.current);
+      if (coHostLocalStreamRef.current) {
+        coHostLocalStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, coHostLocalStreamRef.current!);
+        });
+      }
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) {
+          sendWsEvent('room:cohost_signal', {
+            roomId: liveStream.id,
+            signalType: 'ice',
+            targetUid: peerUid,
+            candidate: JSON.stringify(ev.candidate),
+          });
+        }
+      };
+      pc.ontrack = (ev) => {
+        const [stream] = ev.streams;
+        if (stream) {
+          setCoHostRemoteStreams((prev) => ({ ...prev, [peerUid]: stream }));
+        }
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+          coHostPcsRef.current.delete(peerUid);
+          setCoHostRemoteStreams((prev) => {
+            if (!prev[peerUid]) return prev;
+            const next = { ...prev };
+            delete next[peerUid];
+            return next;
+          });
+        }
+      };
+      coHostPcsRef.current.set(peerUid, pc);
+      return pc;
+    },
+    [liveStream.id, sendWsEvent]
+  );
+
+  const startCoHostPublish = async () => {
+    if (!session) {
+      onRequireLogin();
+      return;
+    }
+    try {
+      const local = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 360 } },
+        audio: true,
+      });
+      coHostLocalStreamRef.current = local;
+      setCoHostLocalStream(local);
+      setCoHostPublishing(true);
+      sendWsEvent('room:cohost_accept', { roomId: liveStream.id });
+      sendWsEvent('room:cohost_signal', { roomId: liveStream.id, signalType: 'ready' });
+      pushToast('Co-Host camera & mic live on stage!', 'success');
+    } catch {
+      sendWsEvent('room:cohost_accept', { roomId: liveStream.id });
+      pushToast('Joined Co-Host stage (camera unavailable in this browser).', 'info');
+    }
+  };
+
+  // WebSocket Room Subscriptions + Multi-Publisher Co-Host WebRTC Signaling
   useEffect(() => {
     sendWsEvent('room:join', { roomId: liveStream.id });
     const unsub = subscribeWs((event, payload) => {
@@ -386,6 +484,68 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
           if (Array.isArray(data.coHosts)) setCoHosts(data.coHosts);
           if (data.followers) setFollowersCount(Math.max(data.followers.length, liveStream.followerCount ?? 0));
         }
+      } else if (event === 'room:cohost_signal' && payload) {
+        const sig = payload as {
+          roomId?: string;
+          signalType?: 'ready' | 'offer' | 'answer' | 'ice' | 'bye';
+          fromUid?: string;
+          sdp?: string;
+          candidate?: string;
+        };
+        if (sig.roomId !== liveStream.id || !sig.fromUid || sig.fromUid === session?.uid) return;
+        const peerUid = sig.fromUid;
+        if (sig.signalType === 'bye') {
+          const pc = coHostPcsRef.current.get(peerUid);
+          pc?.close();
+          coHostPcsRef.current.delete(peerUid);
+          setCoHostRemoteStreams((prev) => {
+            if (!prev[peerUid]) return prev;
+            const next = { ...prev };
+            delete next[peerUid];
+            return next;
+          });
+        } else if (sig.signalType === 'ready') {
+          // Viewer/Host requests video offer from newly live co-host
+          const pc = getOrCreateCoHostPc(peerUid);
+          pc.addTransceiver('video', { direction: 'recvonly' });
+          pc.addTransceiver('audio', { direction: 'recvonly' });
+          pc.createOffer()
+            .then((offer) => pc.setLocalDescription(offer).then(() => offer))
+            .then((offer) => {
+              sendWsEvent('room:cohost_signal', {
+                roomId: liveStream.id,
+                signalType: 'offer',
+                targetUid: peerUid,
+                sdp: offer.sdp,
+              });
+            })
+            .catch(() => {});
+        } else if (sig.signalType === 'offer' && sig.sdp) {
+          const pc = getOrCreateCoHostPc(peerUid);
+          pc.setRemoteDescription({ type: 'offer', sdp: sig.sdp })
+            .then(() => pc.createAnswer())
+            .then((ans) => pc.setLocalDescription(ans).then(() => ans))
+            .then((ans) => {
+              sendWsEvent('room:cohost_signal', {
+                roomId: liveStream.id,
+                signalType: 'answer',
+                targetUid: peerUid,
+                sdp: ans.sdp,
+              });
+            })
+            .catch(() => {});
+        } else if (sig.signalType === 'answer' && sig.sdp) {
+          const pc = coHostPcsRef.current.get(peerUid);
+          pc?.setRemoteDescription({ type: 'answer', sdp: sig.sdp }).catch(() => {});
+        } else if (sig.signalType === 'ice' && sig.candidate) {
+          const pc = coHostPcsRef.current.get(peerUid);
+          try {
+            const cand = JSON.parse(sig.candidate);
+            pc?.addIceCandidate(cand).catch(() => {});
+          } catch {
+            // ignore
+          }
+        }
       } else if (event === 'room:chat_msg' && payload) {
         const msg = payload as ChatMessage;
         if (msg.roomId === liveStream.id) {
@@ -399,6 +559,10 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
       } else if (event === 'room:ended' && payload) {
         const data = payload as { roomId?: string; reason?: string };
         if (data.roomId === liveStream.id) {
+          mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+          mediaStreamRef.current = null;
+          if (videoRef.current) videoRef.current.srcObject = null;
+          stopCoHostMedia();
           pushToast(data.reason || 'This livestream has ended.', 'info');
           onBack();
         }
@@ -407,18 +571,36 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     return () => {
       unsub();
     };
-  }, [liveStream.id, liveStream.followerCount, sendWsEvent, subscribeWs, pushToast, onBack]);
+  }, [
+    liveStream.id,
+    liveStream.followerCount,
+    session?.uid,
+    sendWsEvent,
+    subscribeWs,
+    pushToast,
+    onBack,
+    getOrCreateCoHostPc,
+    stopCoHostMedia,
+  ]);
 
-  // Opt-in Live Chat Translation for latest incoming messages
+  // Opt-in Live Chat Translation (strictly skips gifts, stickers, and [photo:]/[clip:] media tokens)
   useEffect(() => {
     if (!translateOn) return;
     const recent = messages.slice(-8);
     recent.forEach((m) => {
-      if (m.gift || parseStickerCode(m.text) || translations[m.id] || m.text.length < 3) return;
+      if (
+        m.gift ||
+        parseStickerCode(m.text) ||
+        parseMediaToken(m.text) ||
+        translations[m.id] ||
+        m.text.length < 3
+      ) {
+        return;
+      }
       fetch(`/api/translate?q=${encodeURIComponent(m.text)}&to=${encodeURIComponent(locale)}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (d?.translated && d.translated !== m.text) {
+          if (d?.translated && d.translated !== m.text && !d.skipped) {
             setTranslations((prev) => ({ ...prev, [m.id]: d.translated }));
           }
         })
@@ -430,11 +612,15 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
+  // Guaranteed End-kills-tracks on unmount
   useEffect(() => {
     return () => {
       mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+      mediaStreamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
+      stopCoHostMedia();
     };
-  }, []);
+  }, [stopCoHostMedia]);
 
   const handleUnlockPin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -468,6 +654,7 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
     if (cameraActive) {
       mediaStreamRef.current?.getTracks().forEach((tr) => tr.stop());
       mediaStreamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
       setCameraActive(false);
       return;
     }
@@ -1936,39 +2123,91 @@ export const LiveRoomView: React.FC<LiveRoomViewProps> = ({
                   ) : session && coHosts.some((c) => c.uid === session.uid && c.status === 'invited') ? (
                     <button
                       type="button"
-                      onClick={() => sendWsEvent('room:cohost_accept', { roomId: liveStream.id })}
-                      className="h-8 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white cursor-pointer"
+                      onClick={startCoHostPublish}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer"
                     >
-                      Accept Co-Host Stage
+                      <Camera className="h-3.5 w-3.5" />
+                      <span>Go Live as Co-Host</span>
+                    </button>
+                  ) : session && coHostPublishing ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        stopCoHostMedia();
+                        sendWsEvent('room:cohost_leave', { roomId: liveStream.id, targetUid: session.uid });
+                      }}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-rose-600 px-3 text-xs font-semibold text-white hover:bg-rose-700 cursor-pointer"
+                    >
+                      <CameraOff className="h-3.5 w-3.5" />
+                      <span>Stop Co-Host Cam</span>
                     </button>
                   ) : null}
                 </div>
               </div>
               {coHosts.length > 0 && (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {coHosts.map((ch) => (
-                    <div
-                      key={ch.uid}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] px-2.5 py-2 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate font-semibold text-[var(--fg-primary)]">{ch.displayName}</div>
-                        <div className="text-[10px] font-mono-nums text-[var(--fg-muted)]">
-                          {ch.status === 'live' ? 'CO-HOST LIVE' : 'INVITED'}
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2.5">
+                  {coHosts.map((ch) => {
+                    const isSelfCoHost = session?.uid === ch.uid;
+                    const mediaFeed = isSelfCoHost
+                      ? coHostLocalStream
+                      : coHostRemoteStreams[ch.uid] || null;
+                    return (
+                      <div
+                        key={ch.uid}
+                        className="overflow-hidden rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] text-xs"
+                      >
+                        {mediaFeed && (
+                          <div className="relative aspect-video bg-black">
+                            <video
+                              autoPlay
+                              playsInline
+                              muted={isSelfCoHost}
+                              ref={(el) => {
+                                if (el && el.srcObject !== mediaFeed) {
+                                  el.srcObject = mediaFeed;
+                                  el.play().catch(() => {});
+                                }
+                              }}
+                              className="h-full w-full object-cover"
+                            />
+                            <span className="absolute left-1.5 top-1.5 rounded bg-rose-600 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                              {isSelfCoHost ? 'YOU · LIVE CAM' : 'CO-HOST VIDEO'}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold text-[var(--fg-primary)]">
+                              {ch.displayName}
+                            </div>
+                            <div className="text-[10px] font-mono-nums text-[var(--fg-muted)]">
+                              {mediaFeed
+                                ? 'VIDEO PUBLISHING'
+                                : ch.status === 'live'
+                                  ? 'CO-HOST LIVE'
+                                  : 'INVITED'}
+                            </div>
+                          </div>
+                          {(isHostOrMod || isSelfCoHost) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isSelfCoHost) stopCoHostMedia();
+                                sendWsEvent('room:cohost_leave', {
+                                  roomId: liveStream.id,
+                                  targetUid: ch.uid,
+                                });
+                              }}
+                              aria-label="Remove Co-Host"
+                              className="text-[var(--fg-muted)] hover:text-rose-500 cursor-pointer"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </div>
                       </div>
-                      {(isHostOrMod || session?.uid === ch.uid) && (
-                        <button
-                          type="button"
-                          onClick={() => sendWsEvent('room:cohost_leave', { roomId: liveStream.id, targetUid: ch.uid })}
-                          aria-label="Remove Co-Host"
-                          className="text-[var(--fg-muted)] hover:text-rose-500 cursor-pointer"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </section>

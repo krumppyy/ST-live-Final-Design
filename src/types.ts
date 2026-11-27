@@ -1,4 +1,5 @@
 export type UserRole = 'guest' | 'host' | 'admin' | 'agency' | 'band' | 'staff';
+export type TeamDoorTier = 'monitor' | 'trusted' | 'full';
 
 export type StreamCategory =
   | 'all'
@@ -264,6 +265,7 @@ export interface Livestream {
   consentVerified?: boolean;
   createdAt?: number;
   totalGiftsCoins?: number;
+  viewMinutes?: number;
   followerCount?: number;
   maxSeats: number;
   seats: MultiGuestSeat[];

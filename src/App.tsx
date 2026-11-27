@@ -11,11 +11,21 @@ import { Navbar, type ActiveTab } from './components/Navbar';
 import { PreferencesSheet } from './components/PreferencesSheet';
 import { PublicProfileModal } from './components/PublicProfileModal';
 import { RoleWorkspace } from './components/RoleWorkspace';
+import { TeamDoorView } from './components/TeamDoorView';
 import { TestModeDrawer } from './components/TestModeDrawer';
 import { UnifiedLoginModal } from './components/UnifiedLoginModal';
 import { AppProvider, useApp } from './context/AppContext';
 import { countryFlag } from './lib/countries';
-import type { Livestream } from './types';
+import type { Livestream, TeamDoorTier } from './types';
+
+function detectTeamDoorFromUrl(): TeamDoorTier | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('adminpower')) return 'full';
+  if (params.has('admintrust')) return 'trusted';
+  if (params.has('admin')) return 'monitor';
+  return null;
+}
 
 class AppErrorBoundary extends Component<
   { children: React.ReactNode },
@@ -66,7 +76,37 @@ const StreamLiveShell: React.FC = () => {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [profileModalUid, setProfileModalUid] = useState<string | null>(null);
   const [meInitialSubTab, setMeInitialSubTab] = useState<MeTab | null>(null);
+  const [teamDoorTier, setTeamDoorTier] = useState<TeamDoorTier | null>(() => detectTeamDoorFromUrl());
+  const prevMainTabRef = useRef<ActiveTab>('live');
   const deepLinkAppliedRef = useRef(false);
+
+  // Sync URL navigation (?admin / ?admintrust / ?adminpower) on browser history changes
+  useEffect(() => {
+    const onPopState = () => setTeamDoorTier(detectTeamDoorFromUrl());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Remember the last main tab (__prevMain) whenever navigating outside a Team Door
+  useEffect(() => {
+    if (!teamDoorTier) {
+      prevMainTabRef.current = activeTab;
+    }
+  }, [activeTab, teamDoorTier]);
+
+  const handleExitTeamDoor = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('admin');
+      url.searchParams.delete('admintrust');
+      url.searchParams.delete('adminpower');
+      window.history.replaceState({}, '', url.pathname + (url.search ? url.search : '') + url.hash);
+    } catch {
+      /* ignore */
+    }
+    setTeamDoorTier(null);
+    setActiveTab(prevMainTabRef.current || 'live');
+  };
 
   // Draggable Floating PiP Position & Mute Toggle
   const [pipPos, setPipPos] = useState<{ x: number; y: number }>({ x: 16, y: 80 });
@@ -136,6 +176,59 @@ const StreamLiveShell: React.FC = () => {
   };
 
   const isCameraFullscreen = activeTab === 'camera';
+
+  if (teamDoorTier) {
+    return (
+      <>
+        <TeamDoorView
+          tier={teamDoorTier}
+          onBackToMain={handleExitTeamDoor}
+          onViewProfile={(uid) => setProfileModalUid(uid)}
+        />
+        <PublicProfileModal
+          uid={profileModalUid}
+          onClose={() => setProfileModalUid(null)}
+          onMessageUser={(uid) => {
+            setProfileModalUid(null);
+            handleExitTeamDoor();
+            setTargetDmUid(uid);
+            setActiveStream(null);
+            setActiveTab('inbox');
+          }}
+          onWatchStream={(stream) => {
+            setProfileModalUid(null);
+            handleExitTeamDoor();
+            handleOpenStream(stream);
+          }}
+          onRequireLogin={() => {
+            handleExitTeamDoor();
+            setLoginOpen(true);
+          }}
+        />
+        {toasts.length > 0 && (
+          <div
+            aria-live="polite"
+            className="fixed bottom-6 right-4 z-50 flex flex-col gap-2 max-w-sm"
+          >
+            {toasts.map((toast) => (
+              <div
+                key={toast.id}
+                className={`rounded-xl border px-4 py-3 text-xs font-medium shadow-lg backdrop-blur-md ${
+                  toast.tone === 'error'
+                    ? 'border-rose-500/40 bg-rose-950/90 text-rose-100'
+                    : toast.tone === 'success'
+                      ? 'border-emerald-500/40 bg-emerald-950/90 text-emerald-100'
+                      : 'border-[var(--border-hairline)] bg-[var(--bg-surface)]/95 text-[var(--fg-primary)]'
+                }`}
+              >
+                {toast.message}
+              </div>
+            ))}
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[var(--bg-canvas)] text-[var(--fg-primary)] transition-colors duration-200">

@@ -116,6 +116,7 @@ const ALLOWED_WS_EVENTS = new Set([
   'room:cohost_invite',
   'room:cohost_accept',
   'room:cohost_leave',
+  'room:cohost_signal',
   'room:stage_layout',
   'game:request_join',
   'game:approve_player',
@@ -596,6 +597,11 @@ app.post('/api/streams', (req, res) => {
     gaming: '/src/assets/images/stream_gaming_arena_1795687722196.jpg',
     brand_drop: '/src/assets/images/stream_brand_showcase_1795687724180.jpg',
   };
+
+  const liveCount = (db.prepare('SELECT COUNT(*) as c FROM streams WHERE is_live = 1').get() as { c: number }).c;
+  if (liveCount >= MAX_ROOMS) {
+    return res.status(429).json({ error: 'Platform live room capacity reached (1,000 active rooms).' });
+  }
 
   const id = `room-${crypto.randomBytes(4).toString('hex')}`;
   let gameRoomId: string | null = null;
@@ -1327,7 +1333,10 @@ wss.on('connection', (ws, req) => {
       sendWs(ws, 'ws:error', { message: 'Unsupported realtime event.' });
       return;
     }
-    const isSdpEvent = event === 'rtc:offer' || event === 'rtc:answer';
+    const isSdpEvent =
+      event === 'rtc:offer' ||
+      event === 'rtc:answer' ||
+      (event === 'room:cohost_signal' && (payload.signalType === 'offer' || payload.signalType === 'answer'));
     const maxBytes = isSdpEvent ? 9_000 : 2_048;
     if (Buffer.byteLength(rawStr, 'utf8') > maxBytes) {
       sendWs(ws, 'ws:error', { message: 'Message exceeds realtime frame size limit.' });
@@ -1615,7 +1624,57 @@ wss.on('connection', (ws, req) => {
       const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
       if (targetUid === meta.session.uid || canModerateHost(meta.session, stream.hostUid, 'canManageSeats')) {
         rt.coHosts = rt.coHosts.filter((c) => c.uid !== targetUid);
+        broadcastRoom(roomId, 'room:cohost_signal', {
+          roomId,
+          signalType: 'bye',
+          fromUid: targetUid,
+          fromName: meta.session.displayName,
+        });
         broadcastRoom(roomId, 'room:state', buildRoomStatePayload(roomId, rt));
+      }
+      return;
+    }
+
+    // Real-Time Co-Publish Video WebRTC Signaling Relay (Multi-Publisher Path — §B2 / §C.2)
+    if (event === 'room:cohost_signal') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      const signalType = payload.signalType;
+      if (
+        !roomId ||
+        !meta.session ||
+        !['ready', 'offer', 'answer', 'ice', 'bye'].includes(String(signalType))
+      ) {
+        return;
+      }
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const targetUid = typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      const sdp = typeof payload.sdp === 'string' ? payload.sdp : undefined;
+      const candidate = typeof payload.candidate === 'string' ? payload.candidate : undefined;
+      if (sdp && sdp.length > 8192) return;
+      if (candidate && candidate.length > 1200) return;
+
+      const relayPayload = {
+        roomId,
+        signalType,
+        fromUid: meta.session.uid,
+        fromName: meta.session.displayName,
+        targetUid: targetUid || undefined,
+        sdp,
+        candidate,
+      };
+      if (targetUid) {
+        broadcastToUids([targetUid], 'room:cohost_signal', relayPayload);
+      } else {
+        for (const client of clients) {
+          if (
+            client.subscribedRoomId === roomId &&
+            client.session &&
+            client.session.uid !== meta.session.uid
+          ) {
+            sendWs(client.ws, 'room:cohost_signal', relayPayload);
+          }
+        }
       }
       return;
     }

@@ -10,17 +10,22 @@ import {
 } from './db';
 import {
   allocateNumericId,
+  addStreamViewMinutesDb,
   approvePasswordResetDb,
   blockUserForHost,
+  bootstrapTeamKeyDb,
   claimDailyCheckInDb,
   claimHostDailyTaskDb,
   claimTopupPack,
   confirmPasswordResetDb,
+  dismissReportDb,
   findUserByIdentifier,
   getFollowingHostUids,
   getFullUserRow,
   getHostDailyTasksDb,
   getPublicUserProfileDb,
+  getTeamDoorStatusDb,
+  grantCoinsAuditedDb,
   hydrateAuthSession,
   incrementHostDailyTaskDb,
   isBlockedByHost,
@@ -32,6 +37,7 @@ import {
   listReportsDb,
   listRoomAdminsDb,
   listRoomVisitorsDb,
+  listTeamMembersDirectoryDb,
   purchaseShopPerk,
   purchaseVipPlan,
   recordRoomVisitDb,
@@ -41,14 +47,18 @@ import {
   resolveAppealDb,
   resolvePayoutDb,
   sendGiftTransaction,
+  signTeamToken,
   spawnLockedTestRoomDb,
   submitAppealDb,
   submitRoomReportDb,
   switchTestPersonaDb,
   toggleFollowDb,
   toggleRoomAdminDb,
+  unbanUserDb,
   unblockUserForHost,
   verifyRoomPinDb,
+  verifyTeamKeyDb,
+  verifyTeamToken,
   writeAuditLog,
 } from './platformStore';
 import {
@@ -782,7 +792,15 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
       | undefined;
     if (stream) {
       recordRoomVisitDb(req.params.id, stream.host_uid, session.uid, session.displayName);
+      addStreamViewMinutesDb(req.params.id, 1);
     }
+    res.json({ ok: true });
+  });
+
+  router.post('/rooms/:id/heartbeat', (req, res) => {
+    const stream = db.prepare('SELECT id FROM streams WHERE id = ? AND is_live = 1').get(req.params.id);
+    if (!stream) return res.status(404).json({ error: 'Stream not live.' });
+    addStreamViewMinutesDb(req.params.id, 1);
     res.json({ ok: true });
   });
 
@@ -863,7 +881,7 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
   router.get('/translate', async (req, res) => {
     const q = threatScan(String(req.query.q ?? '').slice(0, 300)).clean;
     const to = String(req.query.to ?? 'en').slice(0, 5).toLowerCase();
-    if (!q || /^\[st:/.test(q)) return res.json({ translated: q });
+    if (!q || /^\[(st|photo|clip):/i.test(q)) return res.json({ translated: q, skipped: true });
     try {
       const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(q)}&langpair=autodetect|${encodeURIComponent(to)}`;
       const r = await fetch(url, { signal: AbortSignal.timeout(3500) });
@@ -1001,6 +1019,266 @@ export function createPlatformRouter(hooks: PlatformRouteHooks): express.Router 
     setGlobalLockdown(durationSec * 1000);
     writeAuditLog(staff.uid, 'threat_lockdown', `${durationSec}s`);
     res.json({ ok: true, threat: getThreatState() });
+  });
+
+  // =========================================================================
+  // 4B. TIERED TEAM DOORS (?admin / ?admintrust / ?adminpower — §D)
+  // =========================================================================
+
+  const TEAM_TIER_RANK: Record<'monitor' | 'trusted' | 'full', number> = {
+    monitor: 1,
+    trusted: 2,
+    full: 3,
+  };
+
+  function parseTeamTier(raw: unknown): 'monitor' | 'trusted' | 'full' | null {
+    return raw === 'monitor' || raw === 'trusted' || raw === 'full' ? raw : null;
+  }
+
+  function requireTeamTier(
+    req: express.Request,
+    res: express.Response,
+    minTier: 'monitor' | 'trusted' | 'full'
+  ): { tier: 'monitor' | 'trusted' | 'full'; actor: string } | null {
+    const rawHeader = req.headers['x-team-token'];
+    const token = typeof rawHeader === 'string' ? rawHeader.trim() : '';
+    const verified = verifyTeamToken(token);
+    if (!verified) {
+      writeAuditLog('TEAM-ANON', 'team_auth_denied', req.path, `required=${minTier}`);
+      res.status(401).json({ error: 'Valid Team Door key unlock required.' });
+      return null;
+    }
+    if (TEAM_TIER_RANK[verified.tier] < TEAM_TIER_RANK[minTier]) {
+      writeAuditLog(
+        `TEAM-${verified.tier.toUpperCase()}`,
+        'team_power_denied',
+        String(req.body?.action || req.path),
+        `tier=${verified.tier} required=${minTier}`
+      );
+      res.status(403).json({
+        error: `Tier ${TEAM_TIER_RANK[minTier]} (${minTier.toUpperCase()}) clearance required for this action.`,
+      });
+      return null;
+    }
+    return { tier: verified.tier, actor: `TEAM-${verified.tier.toUpperCase()}` };
+  }
+
+  router.get('/team/status', (_req, res) => {
+    res.json({ tiers: getTeamDoorStatusDb() });
+  });
+
+  router.post('/team/bootstrap', (req, res) => {
+    const clientKey = getClientKey(req);
+    const threat = isThreatBlocked(clientKey);
+    if (threat.blocked) {
+      return res.status(429).json({ error: `Temporarily blocked (${threat.remainingSec}s).` });
+    }
+    const tier = parseTeamTier(req.body?.tier);
+    if (!tier) return res.status(400).json({ error: 'Invalid team tier.' });
+    const passcode = String(req.body?.passcode ?? '');
+    const out = bootstrapTeamKeyDb(tier, passcode);
+    if (!out.ok) return res.status(400).json({ error: out.error });
+    const token = signTeamToken(tier);
+    res.status(201).json({ ok: true, tier, token, tiers: getTeamDoorStatusDb() });
+  });
+
+  router.post('/team/unlock', (req, res) => {
+    const clientKey = getClientKey(req);
+    const threat = isThreatBlocked(clientKey);
+    if (threat.blocked) {
+      return res.status(429).json({ error: `Temporarily blocked (${threat.remainingSec}s).` });
+    }
+    const throttle = checkLoginThrottle(`team:${clientKey}`);
+    if (!throttle.allowed) {
+      return res.status(429).json({ error: `Too many key attempts. Retry in ${throttle.retrySec}s.` });
+    }
+    const tier = parseTeamTier(req.body?.tier);
+    if (!tier) return res.status(400).json({ error: 'Invalid team tier.' });
+    const passcode = String(req.body?.passcode ?? '');
+    if (!verifyTeamKeyDb(tier, passcode)) {
+      recordLoginFailure(`team:${clientKey}`);
+      writeAuditLog('TEAM-ANON', 'team_unlock_failed', tier, clientKey.slice(0, 24));
+      return res.status(401).json({ error: 'Invalid Team Door key.' });
+    }
+    clearLoginFailures(`team:${clientKey}`);
+    const token = signTeamToken(tier);
+    writeAuditLog(`TEAM-${tier.toUpperCase()}`, 'team_unlock_ok', tier);
+    res.json({ ok: true, tier, token });
+  });
+
+  router.get('/team/overview', (req, res) => {
+    const auth = requireTeamTier(req, res, 'monitor');
+    if (!auth) return;
+    const pendingMonetag = db
+      .prepare(
+        "SELECT uid, numeric_id, display_name, monetag_status, monetag_email, monetag_pub_id, monetag_tip_url FROM users WHERE monetag_status != 'none' ORDER BY monetag_checklist_at DESC, created_at DESC LIMIT 30"
+      )
+      .all() as Array<Record<string, any>>;
+    const pendingAads = db
+      .prepare(
+        "SELECT uid, numeric_id, display_name, aads_status, aads_email, aads_unit_id, aads_banner_pos, aads_banner_size FROM users WHERE aads_status != 'none' ORDER BY aads_checklist_at DESC, created_at DESC LIMIT 30"
+      )
+      .all() as Array<Record<string, any>>;
+    const streams = hooks.getHydratedStreams();
+    res.json({
+      tier: auth.tier,
+      counts: {
+        liveRooms: streams.length,
+        roomCeiling: 1000,
+        openReports: listReportsDb().filter((r) => r.status === 'open').length,
+        pendingAppeals: listAppealsDb().filter((a) => a.status === 'pending').length,
+        pendingPayouts: listPayoutsDb().filter((p) => p.status === 'pending').length,
+      },
+      streams: streams.slice(0, 60),
+      members: listTeamMembersDirectoryDb(120),
+      reports: listReportsDb(),
+      appeals: listAppealsDb(),
+      payouts: listPayoutsDb(),
+      monetagQueue: pendingMonetag.map((m) => ({
+        uid: m.uid,
+        numericId: Number(m.numeric_id || 100100),
+        displayName: m.display_name,
+        status: m.monetag_status,
+        email: m.monetag_email || '',
+        publisherId: m.monetag_pub_id || '',
+        tipUrl: m.monetag_tip_url || '',
+      })),
+      aadsQueue: pendingAads.map((a) => ({
+        uid: a.uid,
+        numericId: Number(a.numeric_id || 100100),
+        displayName: a.display_name,
+        status: a.aads_status,
+        email: a.aads_email || '',
+        unitId: a.aads_unit_id || '',
+        bannerPos: a.aads_banner_pos || 'below_stage',
+        bannerSize: a.aads_banner_size || '728x90',
+      })),
+      threat: getThreatState(),
+      auditLogs: listAuditLogs(),
+    });
+  });
+
+  router.post('/team/action', (req, res) => {
+    const action = String(req.body?.action ?? '');
+    const tier2Actions = new Set([
+      'dismiss_report',
+      'resolve_appeal',
+      'unban_user',
+      'end_stream',
+      'block_user',
+      'unblock_user',
+    ]);
+    const tier3Actions = new Set([
+      'resolve_payout',
+      'verify_monetag',
+      'verify_aads',
+      'grant_coins',
+      'threat_unblock',
+      'threat_lockdown',
+    ]);
+
+    if (!tier2Actions.has(action) && !tier3Actions.has(action)) {
+      return res.status(400).json({ error: 'Unknown team action.' });
+    }
+
+    const requiredTier = tier3Actions.has(action) ? 'full' : 'trusted';
+    const auth = requireTeamTier(req, res, requiredTier);
+    if (!auth) return;
+
+    if (action === 'dismiss_report') {
+      const out = dismissReportDb(Number(req.body?.reportId), auth.actor);
+      return out.ok ? res.json({ ok: true }) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'resolve_appeal') {
+      const status = ['approved', 'denied', 'dismissed'].includes(req.body?.status)
+        ? req.body.status
+        : 'dismissed';
+      const out = resolveAppealDb(
+        Number(req.body?.appealId),
+        status,
+        String(req.body?.staffNote ?? '').slice(0, 160),
+        auth.actor
+      );
+      return out.ok ? res.json({ ok: true }) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'unban_user') {
+      const out = unbanUserDb(String(req.body?.targetUid ?? '').trim(), auth.actor);
+      return out.ok ? res.json({ ok: true }) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'end_stream') {
+      const roomId = String(req.body?.roomId ?? '').trim();
+      const row = db.prepare('SELECT id FROM streams WHERE id = ?').get(roomId);
+      if (!row) return res.status(404).json({ error: 'Stream not found.' });
+      db.prepare('UPDATE streams SET is_live = 0 WHERE id = ?').run(roomId);
+      writeAuditLog(auth.actor, 'team_end_stream', roomId);
+      hooks.broadcastToRoom(roomId, 'room:ended', {
+        roomId,
+        reason: 'Ended by StreamLive Safety Team.',
+      });
+      hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
+      return res.json({ ok: true });
+    }
+    if (action === 'block_user') {
+      const targetUid = String(req.body?.targetUid ?? '').trim();
+      const reason = String(req.body?.reason ?? 'Team moderation').slice(0, 120);
+      const out = blockUserForHost('team-global', auth.actor, targetUid, reason);
+      return out.ok ? res.json({ ok: true }) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'unblock_user') {
+      unblockUserForHost(auth.actor, String(req.body?.targetUid ?? '').trim());
+      writeAuditLog(auth.actor, 'team_unblock', String(req.body?.targetUid ?? '').trim());
+      return res.json({ ok: true });
+    }
+    if (action === 'resolve_payout') {
+      const decision = req.body?.decision === 'approved' ? 'approved' : 'denied';
+      const out = resolvePayoutDb(Number(req.body?.payoutId), decision, auth.actor);
+      return out.ok ? res.json({ ok: true }) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'verify_monetag') {
+      const targetUid = String(req.body?.targetUid ?? '').trim();
+      const status = req.body?.status === 'verified' ? 'verified' : 'rejected';
+      if (status === 'verified') {
+        db.prepare("UPDATE users SET monetag_status = 'verified', verified = 1 WHERE uid = ?").run(targetUid);
+      } else {
+        db.prepare("UPDATE users SET monetag_status = 'rejected' WHERE uid = ?").run(targetUid);
+      }
+      writeAuditLog(auth.actor, `team_monetag_${status}`, targetUid);
+      hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
+      return res.json({ ok: true });
+    }
+    if (action === 'verify_aads') {
+      const targetUid = String(req.body?.targetUid ?? '').trim();
+      const status = req.body?.status === 'verified' ? 'verified' : 'rejected';
+      if (status === 'verified') {
+        db.prepare("UPDATE users SET aads_status = 'verified', verified = 1 WHERE uid = ?").run(targetUid);
+      } else {
+        db.prepare("UPDATE users SET aads_status = 'rejected' WHERE uid = ?").run(targetUid);
+      }
+      writeAuditLog(auth.actor, `team_aads_${status}`, targetUid);
+      hooks.broadcastAll('streams:updated', hooks.getHydratedStreams());
+      return res.json({ ok: true });
+    }
+    if (action === 'grant_coins') {
+      const targetUid = String(req.body?.targetUid ?? '').trim();
+      const amount = Number(req.body?.amount) || 0;
+      const reason = String(req.body?.reason ?? 'Team adjustment').trim();
+      const out = grantCoinsAuditedDb(targetUid, amount, reason, auth.actor);
+      return out.ok ? res.json(out) : res.status(400).json({ error: out.error });
+    }
+    if (action === 'threat_unblock') {
+      const key = String(req.body?.key ?? '');
+      unblockThreatKey(key);
+      writeAuditLog(auth.actor, 'team_threat_unblock', key);
+      return res.json({ ok: true, threat: getThreatState() });
+    }
+    if (action === 'threat_lockdown') {
+      const durationSec = Math.max(0, Math.min(300, Number(req.body?.durationSec) || 0));
+      setGlobalLockdown(durationSec * 1000);
+      writeAuditLog(auth.actor, 'team_threat_lockdown', `${durationSec}s`);
+      return res.json({ ok: true, threat: getThreatState() });
+    }
+
+    return res.status(400).json({ error: 'Unhandled action.' });
   });
 
   // =========================================================================

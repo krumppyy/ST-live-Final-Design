@@ -39,6 +39,7 @@ import type {
   RoomVisitor,
   SafetyAppeal,
   SafetyReport,
+  TeamDoorTier,
   UserRole,
   VipTier,
 } from '../src/types';
@@ -124,9 +125,16 @@ export function initPlatformStore(): void {
   addColIfMissing('streams', 'consent_verified', 'INTEGER NOT NULL DEFAULT 1');
   addColIfMissing('streams', 'created_at', 'INTEGER NOT NULL DEFAULT 0');
   addColIfMissing('streams', 'total_gifts_coins', 'INTEGER NOT NULL DEFAULT 0');
+  addColIfMissing('streams', 'view_minutes', 'INTEGER NOT NULL DEFAULT 0');
 
   // 3. New persistent tables
   db.exec(`
+    CREATE TABLE IF NOT EXISTS team_keys (
+      tier TEXT PRIMARY KEY,
+      key_hash TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS follows (
       follower_uid TEXT NOT NULL,
       host_uid TEXT NOT NULL,
@@ -563,7 +571,7 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
     .prepare(
       `SELECT s.id, s.host_uid, s.host_name, s.title, s.category, s.language, s.country_code,
               s.viewer_count, s.thumbnail, s.is_live, s.max_seats, s.game_room_id, s.game_type,
-              s.is_locked, s.consent_verified, s.created_at, s.total_gifts_coins,
+              s.is_locked, s.consent_verified, s.created_at, s.total_gifts_coins, s.view_minutes,
               u.numeric_id as host_numeric_id, u.verified as host_verified,
               u.avatar_url as host_avatar_url,
               CASE WHEN u.monetag_status = 'verified' OR u.aads_status = 'verified' THEN 1 ELSE 0 END as host_partner_verified,
@@ -606,11 +614,20 @@ export function listExtendedStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
     consentVerified: r.consent_verified !== 0,
     createdAt: Number(r.created_at || Date.now()),
     totalGiftsCoins: Number(r.total_gifts_coins || 0),
+    viewMinutes: Number(r.view_minutes || 0),
     followerCount: Number(r.follower_count || 0),
     maxSeats: Number(r.max_seats || 4),
     gameRoomId: r.game_room_id ?? undefined,
     gameType: r.game_type ?? undefined,
   }));
+}
+
+export function addStreamViewMinutesDb(roomId: string, minutes = 1): void {
+  const safeMin = Math.max(1, Math.min(5, Math.floor(minutes)));
+  db.prepare('UPDATE streams SET view_minutes = view_minutes + ? WHERE id = ? AND is_live = 1').run(
+    safeMin,
+    roomId
+  );
 }
 
 export function listExtendedDirectoryUsers(): DirectoryUser[] {
@@ -1331,6 +1348,13 @@ export function recordRoomVisitDb(roomId: string, hostUid: string, visitorUid: s
   db.prepare(
     'INSERT INTO room_visits (room_id, host_uid, visitor_uid, visitor_name, visited_at) VALUES (?, ?, ?, ?, ?)'
   ).run(roomId, hostUid, visitorUid, visitorName.slice(0, 32), Date.now());
+  // Enforce 300-row per-room visitor log ceiling
+  db.prepare(
+    `DELETE FROM room_visits
+     WHERE room_id = ? AND id NOT IN (
+       SELECT id FROM room_visits WHERE room_id = ? ORDER BY visited_at DESC LIMIT 300
+     )`
+  ).run(roomId, roomId);
 }
 
 export function listRoomVisitorsDb(
@@ -1663,3 +1687,200 @@ export function verifyRoomPinDb(roomId: string, pin: string): boolean {
   if (!row?.pin_hash) return true;
   return verifyPassword(pin, row.pin_hash);
 }
+
+// ---------------------------------------------------------------------------
+// Tiered Team Doors (?admin / ?admintrust / ?adminpower) — Zero-Trust Key Auth
+// ---------------------------------------------------------------------------
+
+const TEAM_TOKEN_SECRET =
+  process.env.STLIVE_TEAM_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
+
+const TEAM_ENV_MAP: Record<TeamDoorTier, string> = {
+  monitor: 'STLIVE_TEAM_KEY_MONITOR',
+  trusted: 'STLIVE_TEAM_KEY_TRUSTED',
+  full: 'STLIVE_TEAM_KEY_FULL',
+};
+
+function getEnvTeamKey(tier: TeamDoorTier): string {
+  const raw = process.env[TEAM_ENV_MAP[tier]];
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+function constantTimeMatch(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+export function getTeamDoorStatusDb(): Record<
+  TeamDoorTier,
+  { configured: boolean; source: 'env' | 'claimed' | 'unclaimed' }
+> {
+  const tiers: TeamDoorTier[] = ['monitor', 'trusted', 'full'];
+  const out = {} as Record<TeamDoorTier, { configured: boolean; source: 'env' | 'claimed' | 'unclaimed' }>;
+  for (const tier of tiers) {
+    if (getEnvTeamKey(tier).length >= 6) {
+      out[tier] = { configured: true, source: 'env' };
+      continue;
+    }
+    const row = db.prepare('SELECT tier FROM team_keys WHERE tier = ?').get(tier);
+    out[tier] = row
+      ? { configured: true, source: 'claimed' }
+      : { configured: false, source: 'unclaimed' };
+  }
+  return out;
+}
+
+export function bootstrapTeamKeyDb(
+  tier: TeamDoorTier,
+  passcode: string
+): { ok: boolean; error?: string } {
+  const clean = passcode.trim();
+  if (clean.length < 8 || clean.length > 120) {
+    return { ok: false, error: 'Team key must be 8–120 characters.' };
+  }
+  if (getEnvTeamKey(tier).length >= 6) {
+    return { ok: false, error: 'This tier key is managed by server environment configuration.' };
+  }
+  const existing = db.prepare('SELECT tier FROM team_keys WHERE tier = ?').get(tier);
+  if (existing) {
+    return { ok: false, error: 'This tier key has already been claimed.' };
+  }
+  const hash = hashPassword(clean);
+  db.prepare('INSERT INTO team_keys (tier, key_hash, updated_at) VALUES (?, ?, ?)').run(
+    tier,
+    hash,
+    Date.now()
+  );
+  writeAuditLog(`TEAM-${tier.toUpperCase()}`, 'team_key_claimed', tier, 'first-run bootstrap');
+  return { ok: true };
+}
+
+export function verifyTeamKeyDb(tier: TeamDoorTier, candidate: string): boolean {
+  const clean = candidate.trim();
+  if (!clean) return false;
+  const envVal = getEnvTeamKey(tier);
+  if (envVal.length >= 6) {
+    return constantTimeMatch(clean, envVal);
+  }
+  const row = db.prepare('SELECT key_hash FROM team_keys WHERE tier = ?').get(tier) as
+    | { key_hash: string }
+    | undefined;
+  if (!row?.key_hash) return false;
+  return verifyPassword(clean, row.key_hash);
+}
+
+export function signTeamToken(tier: TeamDoorTier): string {
+  const exp = Date.now() + 1000 * 60 * 90; // 90m memory-scoped session
+  const payload = Buffer.from(JSON.stringify({ tier, exp, nonce: crypto.randomBytes(6).toString('hex') })).toString(
+    'base64url'
+  );
+  const sig = crypto.createHmac('sha256', TEAM_TOKEN_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+export function verifyTeamToken(token: string | undefined): { tier: TeamDoorTier } | null {
+  if (!token || !token.includes('.')) return null;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return null;
+  const expected = crypto.createHmac('sha256', TEAM_TOKEN_SECRET).update(payload).digest('base64url');
+  if (!constantTimeMatch(sig, expected)) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as {
+      tier?: TeamDoorTier;
+      exp?: number;
+    };
+    if (!parsed.tier || !['monitor', 'trusted', 'full'].includes(parsed.tier)) return null;
+    if (!parsed.exp || parsed.exp < Date.now()) return null;
+    return { tier: parsed.tier };
+  } catch {
+    return null;
+  }
+}
+
+export function listTeamMembersDirectoryDb(limit = 120): Array<{
+  uid: string;
+  numericId: number;
+  displayName: string;
+  role: string;
+  countryCode: string;
+  level: number;
+  coins: number;
+  diamonds: number;
+  verified: boolean;
+  partnerVerified: boolean;
+  bannedUntil: number;
+  banStrikes: number;
+  avatarUrl?: string;
+}> {
+  const safeLimit = Math.max(10, Math.min(300, limit));
+  const rows = db
+    .prepare(
+      `SELECT uid, numeric_id, display_name, role, country_code, xp, coins, diamonds,
+              verified, monetag_status, aads_status, banned_until, ban_strikes, avatar_url
+       FROM users ORDER BY created_at DESC LIMIT ?`
+    )
+    .all(safeLimit) as Array<Record<string, any>>;
+
+  return rows.map((r) => {
+    const partnerVerified = r.monetag_status === 'verified' || r.aads_status === 'verified';
+    return {
+      uid: r.uid,
+      numericId: Number(r.numeric_id || 100100),
+      displayName: r.display_name,
+      role: r.role,
+      countryCode: r.country_code || 'US',
+      level: levelFromXp(Number(r.xp || 0)),
+      coins: Number(r.coins || 0),
+      diamonds: Number(r.diamonds || 0),
+      verified: Boolean(r.verified) || partnerVerified,
+      partnerVerified,
+      bannedUntil: Number(r.banned_until || 0),
+      banStrikes: Number(r.ban_strikes || 0),
+      avatarUrl: r.avatar_url || undefined,
+    };
+  });
+}
+
+export function unbanUserDb(targetUid: string, actor: string): { ok: boolean; error?: string } {
+  const u = getFullUserRow(targetUid);
+  if (!u) return { ok: false, error: 'User not found.' };
+  db.prepare('UPDATE users SET banned_until = 0 WHERE uid = ?').run(targetUid);
+  writeAuditLog(actor, 'team_unban', targetUid, 'temp ban lifted');
+  return { ok: true };
+}
+
+export function dismissReportDb(reportId: number, actor: string): { ok: boolean; error?: string } {
+  const row = db.prepare('SELECT id, room_id FROM reports WHERE id = ?').get(reportId) as
+    | { id: number; room_id: string }
+    | undefined;
+  if (!row) return { ok: false, error: 'Report not found.' };
+  db.prepare("UPDATE reports SET status = 'dismissed' WHERE id = ?").run(reportId);
+  writeAuditLog(actor, 'team_report_dismiss', `report#${reportId}`, row.room_id);
+  return { ok: true };
+}
+
+export function grantCoinsAuditedDb(
+  targetUid: string,
+  amount: number,
+  reason: string,
+  actor: string
+): { ok: boolean; error?: string; newBalance?: number } {
+  const safeAmt = Math.floor(Number(amount) || 0);
+  if (safeAmt < 10 || safeAmt > 25_000) {
+    return { ok: false, error: 'Grant amount must be between 10 and 25,000 coins.' };
+  }
+  const u = getFullUserRow(targetUid);
+  if (!u) return { ok: false, error: 'Target user not found.' };
+  const mint = checkAndReserveMint(targetUid, safeAmt, `team_grant:${actor}`);
+  if (!mint.ok) return { ok: false, error: mint.error };
+  db.prepare('UPDATE users SET coins = MIN(?, coins + ?) WHERE uid = ?').run(
+    MAX_BALANCE_CAP,
+    safeAmt,
+    targetUid
+  );
+  const updated = getFullUserRow(targetUid);
+  writeAuditLog(actor, 'team_grant_coins', targetUid, `+${safeAmt}c (${reason.slice(0, 60)})`);
+  return { ok: true, newBalance: Number(updated?.coins || 0) };
+}
+

@@ -4,10 +4,13 @@ import {
   Check,
   Copy,
   Download,
+  FileDown,
   Film,
   Gift,
   Image as ImageIcon,
   LayoutGrid,
+  Repeat,
+  Scissors,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -44,7 +47,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
   } = useApp();
 
   const [category, setCategory] = useState<'all' | 'photo' | 'video'>('all');
+  const [gridDensity, setGridDensity] = useState<'xs' | 'sm' | 'md' | 'lg' | 'xl'>('md');
   const [editingAsset, setEditingAsset] = useState<CapturedAsset | null>(null);
+  const [trimmingAsset, setTrimmingAsset] = useState<CapturedAsset | null>(null);
+  const [trimDuration, setTrimDuration] = useState<number>(15);
+  const [trimIn, setTrimIn] = useState<number>(0);
+  const [trimOut, setTrimOut] = useState<number>(15);
+  const [trimLoopEnabled, setTrimLoopEnabled] = useState<boolean>(true);
+  const trimVideoRef = useRef<HTMLVideoElement | null>(null);
   const [collageOpen, setCollageOpen] = useState<boolean>(false);
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
 
@@ -57,6 +67,14 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
   const [polaroidCaption, setPolaroidCaption] = useState<string>('StreamLive Studio');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+
+  const gridClassMap: Record<'xs' | 'sm' | 'md' | 'lg' | 'xl', string> = {
+    xs: 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2.5',
+    sm: 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3',
+    md: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1920px]:grid-cols-5 min-[2480px]:grid-cols-6 gap-4',
+    lg: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-5',
+    xl: 'grid-cols-1 lg:grid-cols-2 gap-6',
+  };
 
   const libraryPhotos = mediaLibrary.filter((a) => a.type === 'photo');
   const filtered = mediaLibrary.filter((item) =>
@@ -203,6 +221,81 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
     setEditingAsset(null);
   };
 
+  const handleCopyLookLut = () => {
+    const lutObj = DARKROOM_LUTS.find((l) => l.id === lutId) || DARKROOM_LUTS[0];
+    const cssFilter = `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) ${lutObj.filter}`.trim();
+    const payload = JSON.stringify(
+      {
+        preset: 'StreamLive Darkroom LUT',
+        lutId: lutObj.id,
+        lutName: lutObj.name,
+        brightness,
+        contrast,
+        saturation,
+        polaroidFrame,
+        cssFilter,
+      },
+      null,
+      2
+    );
+    navigator.clipboard?.writeText(payload).catch(() => {});
+    pushToast(`Copied "${lutObj.name}" Look / LUT recipe JSON to clipboard.`, 'success');
+  };
+
+  const handleExportAllJson = () => {
+    if (mediaLibrary.length === 0) {
+      pushToast('Studio Library is empty — capture or import media first.', 'info');
+      return;
+    }
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      app: 'StreamLive Studio Library',
+      totalItems: mediaLibrary.length,
+      items: mediaLibrary.map((item) => ({
+        id: item.id,
+        type: item.type,
+        label: item.label,
+        createdAt: item.createdAt,
+        // Embed data URLs for photos; keep reference note for session blob videos
+        dataUrl: item.url.startsWith('data:') ? item.url : null,
+        note: item.url.startsWith('blob:') ? 'Local session video blob — export individually as .webm' : undefined,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `streamlive-library-export-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    pushToast(`Exported ${mediaLibrary.length} library items to JSON archive.`, 'success');
+  };
+
+  const openLoopTrimmer = (asset: CapturedAsset) => {
+    setTrimmingAsset(asset);
+    setTrimDuration(15);
+    setTrimIn(0);
+    setTrimOut(15);
+    setTrimLoopEnabled(true);
+  };
+
+  const handleSaveLoopClipMeta = () => {
+    if (!trimmingAsset) return;
+    const cleanIn = Number(trimIn.toFixed(1));
+    const cleanOut = Number(Math.max(cleanIn + 0.5, trimOut).toFixed(1));
+    addMediaAsset({
+      id: `loop-${Date.now()}`,
+      type: 'video',
+      url: trimmingAsset.url,
+      label: `Loop ${cleanIn}s–${cleanOut}s · ${trimmingAsset.label.replace(/^Loop [^·]+ · /, '')}`,
+      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    });
+    pushToast(`Saved In/Out Loop (${cleanIn}s – ${cleanOut}s) to Studio Library.`, 'success');
+    setTrimmingAsset(null);
+  };
+
   const storagePct = Math.min(100, Math.round((mediaLibrary.length / 24) * 100));
 
   return (
@@ -242,6 +335,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           >
             <LayoutGrid className="h-4 w-4 text-[var(--accent-primary)]" />
             <span>Collage</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportAllJson}
+            title="Export Studio Library archive as JSON"
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-secondary)] cursor-pointer"
+          >
+            <FileDown className="h-4 w-4 text-[var(--accent-secondary)]" />
+            <span>Export JSON</span>
           </button>
 
           <button
@@ -296,11 +399,30 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           ))}
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-[var(--fg-secondary)]">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--fg-secondary)]">
+          {/* XS / SM / MD / LG / XL Grid Density Switcher */}
+          <div className="inline-flex items-center gap-0.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-elevated)] p-0.5">
+            {(['xs', 'sm', 'md', 'lg', 'xl'] as const).map((sz) => (
+              <button
+                key={sz}
+                type="button"
+                onClick={() => setGridDensity(sz)}
+                title={`Grid size: ${sz.toUpperCase()}`}
+                className={`h-7 rounded-lg px-2 text-[10px] font-bold uppercase cursor-pointer transition-colors ${
+                  gridDensity === sz
+                    ? 'bg-[var(--bg-surface)] text-[var(--fg-primary)] shadow-xs'
+                    : 'text-[var(--fg-muted)] hover:text-[var(--fg-primary)]'
+                }`}
+              >
+                {sz}
+              </button>
+            ))}
+          </div>
+
           <span className="font-mono-nums">
             Reel Capacity: <strong className="text-[var(--fg-primary)]">{mediaLibrary.length} / 24</strong>
           </span>
-          <div className="h-2 w-28 overflow-hidden rounded-full bg-[var(--bg-elevated)]">
+          <div className="h-2 w-24 overflow-hidden rounded-full bg-[var(--bg-elevated)]">
             <div
               className="h-full rounded-full bg-[var(--accent-primary)] transition-all"
               style={{ width: `${storagePct}%` }}
@@ -327,7 +449,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
           </button>
         </section>
       ) : (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 min-[1920px]:grid-cols-5 min-[2480px]:grid-cols-6 gap-4">
+        <section className={`grid ${gridClassMap[gridDensity]}`}>
           {filtered.map((item) => (
             <article
               key={item.id}
@@ -368,7 +490,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
                       <Copy className="h-3.5 w-3.5" />
                     )}
                   </button>
-                  {item.type === 'photo' && (
+                  {item.type === 'photo' ? (
                     <button
                       type="button"
                       onClick={() => openDarkroom(item)}
@@ -377,6 +499,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
                       className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-hairline)] text-[var(--accent-primary)] hover:border-[var(--accent-primary)] cursor-pointer"
                     >
                       <SlidersHorizontal className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openLoopTrimmer(item)}
+                      aria-label="In/Out Loop Trimmer"
+                      title="In / Out Loop Trimmer"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-hairline)] text-[var(--accent-secondary)] hover:border-[var(--accent-secondary)] cursor-pointer"
+                    >
+                      <Scissors className="h-3.5 w-3.5" />
                     </button>
                   )}
                   <a
@@ -520,19 +652,156 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenCamera }) => {
                   )}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleSaveDarkroomCopy}
-                  className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-primary)] text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
-                >
-                  <Check className="h-4 w-4" />
-                  <span>Save Copy to Library</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyLookLut}
+                    className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-secondary)] cursor-pointer"
+                  >
+                    <Copy className="h-3.5 w-3.5 text-[var(--accent-secondary)]" />
+                    <span>Copy LUT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveDarkroomCopy}
+                    className="inline-flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-[var(--accent-primary)] text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
+                  >
+                    <Check className="h-4 w-4" />
+                    <span>Save Copy</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Video Clip In / Out Loop Trimmer Modal */}
+      {trimmingAsset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-2xl rounded-2xl border border-[var(--border-hairline)] bg-[var(--bg-surface)] overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--border-hairline)] px-5 py-3.5">
+              <div className="flex items-center gap-2">
+                <Scissors className="h-4 w-4 text-[var(--accent-secondary)]" />
+                <h2 className="font-display text-sm font-bold text-[var(--fg-primary)]">
+                  Clip In / Out Loop Trimmer
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTrimmingAsset(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--fg-secondary)] hover:bg-[var(--bg-elevated)] cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="aspect-video w-full overflow-hidden rounded-xl bg-black">
+                <video
+                  ref={trimVideoRef}
+                  src={trimmingAsset.url}
+                  controls
+                  playsInline
+                  onLoadedMetadata={(e) => {
+                    const dur = Number.isFinite(e.currentTarget.duration) && e.currentTarget.duration > 0
+                      ? Number(e.currentTarget.duration.toFixed(1))
+                      : 15;
+                    setTrimDuration(dur);
+                    setTrimIn(0);
+                    setTrimOut(dur);
+                  }}
+                  onTimeUpdate={(e) => {
+                    if (!trimLoopEnabled) return;
+                    const v = e.currentTarget;
+                    if (v.currentTime < trimIn || v.currentTime >= trimOut) {
+                      v.currentTime = trimIn;
+                    }
+                  }}
+                  className="h-full w-full object-contain"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <label className="space-y-1">
+                  <div className="flex items-center justify-between font-mono-nums text-[var(--fg-secondary)]">
+                    <span>In Point</span>
+                    <strong className="text-[var(--fg-primary)]">{trimIn.toFixed(1)}s</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0.5, trimOut - 0.5)}
+                    step={0.1}
+                    value={trimIn}
+                    onChange={(e) => {
+                      const next = Number(e.target.value);
+                      setTrimIn(next);
+                      if (trimVideoRef.current) trimVideoRef.current.currentTime = next;
+                    }}
+                    className="w-full accent-[var(--accent-secondary)]"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <div className="flex items-center justify-between font-mono-nums text-[var(--fg-secondary)]">
+                    <span>Out Point</span>
+                    <strong className="text-[var(--fg-primary)]">{trimOut.toFixed(1)}s</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={Math.min(trimDuration, trimIn + 0.5)}
+                    max={Math.max(1, trimDuration)}
+                    step={0.1}
+                    value={trimOut}
+                    onChange={(e) => setTrimOut(Number(e.target.value))}
+                    className="w-full accent-[var(--accent-primary)]"
+                  />
+                </label>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--border-hairline)]">
+                <button
+                  type="button"
+                  onClick={() => setTrimLoopEnabled((v) => !v)}
+                  className={`inline-flex h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold cursor-pointer ${
+                    trimLoopEnabled
+                      ? 'border-[var(--accent-secondary)] bg-[var(--accent-secondary)]/15 text-[var(--accent-secondary)]'
+                      : 'border-[var(--border-hairline)] bg-[var(--bg-canvas)] text-[var(--fg-secondary)]'
+                  }`}
+                >
+                  <Repeat className="h-3.5 w-3.5" />
+                  <span>{trimLoopEnabled ? 'Seamless Loop ON' : 'Seamless Loop OFF'}</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (trimVideoRef.current) {
+                        trimVideoRef.current.currentTime = trimIn;
+                        trimVideoRef.current.play().catch(() => {});
+                      }
+                    }}
+                    className="h-9 rounded-xl border border-[var(--border-hairline)] bg-[var(--bg-canvas)] px-3.5 text-xs font-semibold text-[var(--fg-primary)] hover:border-[var(--accent-secondary)] cursor-pointer"
+                  >
+                    Preview Loop ({Math.max(0.5, trimOut - trimIn).toFixed(1)}s)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveLoopClipMeta}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-[var(--accent-primary)] px-4 text-xs font-semibold text-[var(--accent-contrast)] hover:bg-[var(--accent-primary-hover)] cursor-pointer"
+                  >
+                    <Check className="h-4 w-4" />
+                    <span>Save Loop Clip</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <CollageMakerModal
         open={collageOpen}
         onClose={() => setCollageOpen(false)}

@@ -138,8 +138,16 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
         return (b.createdAt || 0) - (a.createdAt || 0);
       }
       if (feedTab === 'popular') {
-        const scoreB = b.viewerCount + (b.totalGiftsCoins || 0) + (b.followerCount || 0) * 10;
-        const scoreA = a.viewerCount + (a.totalGiftsCoins || 0) + (a.followerCount || 0) * 10;
+        const scoreB =
+          (b.viewMinutes || 0) * 20 +
+          b.viewerCount +
+          (b.totalGiftsCoins || 0) +
+          (b.followerCount || 0) * 10;
+        const scoreA =
+          (a.viewMinutes || 0) * 20 +
+          a.viewerCount +
+          (a.totalGiftsCoins || 0) +
+          (a.followerCount || 0) * 10;
         return scoreB - scoreA;
       }
       if (feedTab === 'nearby') {
@@ -168,7 +176,12 @@ export const LiveHome: React.FC<LiveHomeProps> = ({ onSelectStream, onViewProfil
     return counts;
   }, [streams]);
 
-  const formatCount = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
+  const formatCount = (n: number) =>
+    n >= 1_000_000
+      ? `${(n / 1_000_000).toFixed(1)}M`
+      : n >= 1000
+        ? `${(n / 1000).toFixed(1)}K`
+        : String(n);
 
   const renderHostAvatar = (stream: Livestream, sizeClass = 'h-5 w-5') => {
     const initials = (stream.hostName || 'ST').slice(0, 2).toUpperCase();
