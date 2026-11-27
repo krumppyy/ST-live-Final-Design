@@ -1,15 +1,19 @@
 import React, { Component, useEffect, useRef, useState } from 'react';
+import { Maximize2, X } from 'lucide-react';
 import { CameraStudio } from './components/CameraStudio';
 import { InboxHub } from './components/InboxHub';
 import { LibraryView } from './components/LibraryView';
 import { LiveHome } from './components/LiveHome';
 import { LiveRoomView } from './components/LiveRoomView';
+import { MeHub } from './components/MeHub';
 import { MultiplayerGamesHub } from './components/MultiplayerGamesHub';
 import { Navbar, type ActiveTab } from './components/Navbar';
 import { PreferencesSheet } from './components/PreferencesSheet';
 import { RoleWorkspace } from './components/RoleWorkspace';
+import { TestModeDrawer } from './components/TestModeDrawer';
 import { UnifiedLoginModal } from './components/UnifiedLoginModal';
 import { AppProvider, useApp } from './context/AppContext';
+import { countryFlag } from './lib/countries';
 import type { Livestream } from './types';
 
 class AppErrorBoundary extends Component<
@@ -50,15 +54,20 @@ class AppErrorBoundary extends Component<
 }
 
 const StreamLiveShell: React.FC = () => {
-  const { toasts, streams } = useApp();
+  const { toasts, streams, pipStream, setPipStream } = useApp();
   const [activeTab, setActiveTab] = useState<ActiveTab>('live');
   const [activeStream, setActiveStream] = useState<Livestream | null>(null);
   const [targetGameId, setTargetGameId] = useState<string | null>(null);
   const [targetDmUid, setTargetDmUid] = useState<string | null>(null);
   const [targetJoinCode, setTargetJoinCode] = useState<string | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [testModeOpen, setTestModeOpen] = useState(false);
   const [prefsOpen, setPrefsOpen] = useState(false);
   const deepLinkAppliedRef = useRef(false);
+
+  // Draggable Floating PiP Position
+  const [pipPos, setPipPos] = useState<{ x: number; y: number }>({ x: 16, y: 80 });
+  const pipDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
   // Resolve directly shared links (?room=<id>, ?live=cam, or ?joinGroup=<code>)
   useEffect(() => {
@@ -91,6 +100,17 @@ const StreamLiveShell: React.FC = () => {
     }
   };
 
+  const handleOpenStream = (stream: Livestream) => {
+    setPipStream(null);
+    setActiveStream(stream);
+    setActiveTab('live');
+  };
+
+  const handleMinimizePip = (stream: Livestream) => {
+    setPipStream(stream);
+    setActiveStream(null);
+  };
+
   const handleOpenGameFromStream = (gameRoomId: string) => {
     setTargetGameId(gameRoomId);
     setActiveStream(null);
@@ -106,6 +126,7 @@ const StreamLiveShell: React.FC = () => {
           activeTab={activeTab}
           onSelectTab={handleSelectTab}
           onOpenLogin={() => setLoginOpen(true)}
+          onOpenTestMode={() => setTestModeOpen(true)}
           onOpenPreferences={() => setPrefsOpen(true)}
         />
       )}
@@ -117,6 +138,7 @@ const StreamLiveShell: React.FC = () => {
             <LiveRoomView
               stream={activeStream}
               onBack={() => setActiveStream(null)}
+              onMinimizePip={handleMinimizePip}
               onOpenGame={handleOpenGameFromStream}
               onMessageHost={(hostUid) => {
                 setTargetDmUid(hostUid);
@@ -126,7 +148,7 @@ const StreamLiveShell: React.FC = () => {
               onRequireLogin={() => setLoginOpen(true)}
             />
           ) : (
-            <LiveHome onSelectStream={(stream) => setActiveStream(stream)} />
+            <LiveHome onSelectStream={handleOpenStream} />
           ))}
 
         {activeTab === 'games' && (
@@ -139,10 +161,7 @@ const StreamLiveShell: React.FC = () => {
         {activeTab === 'camera' && (
           <CameraStudio
             onBack={() => handleSelectTab('live')}
-            onGoLive={(stream) => {
-              setActiveStream(stream);
-              setActiveTab('live');
-            }}
+            onGoLive={handleOpenStream}
             onRequireLogin={() => setLoginOpen(true)}
           />
         )}
@@ -166,24 +185,110 @@ const StreamLiveShell: React.FC = () => {
         {activeTab === 'workspace' && (
           <RoleWorkspace
             onOpenLogin={() => setLoginOpen(true)}
-            onEnterStream={(stream) => {
-              setActiveStream(stream);
-              setActiveTab('live');
-            }}
+            onEnterStream={handleOpenStream}
             onNavigateTab={(tab) => handleSelectTab(tab)}
           />
         )}
+
+        {activeTab === 'me' && (
+          <MeHub
+            onOpenLogin={() => setLoginOpen(true)}
+            onOpenTestMode={() => setTestModeOpen(true)}
+          />
+        )}
       </div>
+
+      {/* Floating Draggable PiP Mini-Player when a Live Room is minimized */}
+      {pipStream && !activeStream && !isCameraFullscreen && (
+        <div
+          style={{ right: `${pipPos.x}px`, bottom: `${pipPos.y}px` }}
+          onPointerDown={(e) => {
+            if ((e.target as HTMLElement).closest('button')) return;
+            pipDragRef.current = {
+              startX: e.clientX,
+              startY: e.clientY,
+              origX: pipPos.x,
+              origY: pipPos.y,
+            };
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          }}
+          onPointerMove={(e) => {
+            if (!pipDragRef.current) return;
+            const dx = pipDragRef.current.startX - e.clientX;
+            const dy = pipDragRef.current.startY - e.clientY;
+            setPipPos({
+              x: Math.max(8, Math.min(window.innerWidth - 220, pipDragRef.current.origX + dx)),
+              y: Math.max(64, Math.min(window.innerHeight - 160, pipDragRef.current.origY + dy)),
+            });
+          }}
+          onPointerUp={() => {
+            pipDragRef.current = null;
+          }}
+          className="fixed z-40 w-52 sm:w-60 overflow-hidden rounded-2xl border border-[var(--accent-primary)]/70 bg-black shadow-2xl cursor-grab active:cursor-grabbing select-none"
+        >
+          <div className="relative aspect-video">
+            <img
+              src={pipStream.thumbnail}
+              alt={pipStream.title}
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-black/60" />
+            <div className="absolute inset-x-2 top-1.5 flex items-center justify-between text-white">
+              <span className="inline-flex items-center gap-1 rounded bg-black/65 px-1.5 py-0.5 text-[9px] font-bold">
+                <span className="text-[var(--accent-primary)]">LIVE</span>
+                <span>{countryFlag(pipStream.countryCode)}</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleOpenStream(pipStream)}
+                  aria-label="Expand PiP Stream"
+                  className="flex h-6 w-6 items-center justify-center rounded-md bg-black/70 hover:bg-[var(--accent-primary)] cursor-pointer"
+                >
+                  <Maximize2 className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPipStream(null)}
+                  aria-label="Close PiP Stream"
+                  className="flex h-6 w-6 items-center justify-center rounded-md bg-black/70 hover:bg-rose-600 cursor-pointer"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleOpenStream(pipStream)}
+              className="absolute inset-x-2 bottom-1.5 text-left text-white cursor-pointer"
+            >
+              <div className="truncate text-[11px] font-bold leading-tight">{pipStream.title}</div>
+              <div className="truncate text-[10px] text-white/75">{pipStream.hostName}</div>
+            </button>
+          </div>
+        </div>
+      )}
 
       <UnifiedLoginModal
         open={loginOpen}
         onClose={() => setLoginOpen(false)}
         onSuccess={(s) => {
-          if (s.role !== 'guest') {
+          if (s.role === 'staff') {
+            setActiveStream(null);
+            setActiveTab('me');
+          } else if (s.role !== 'guest') {
             setActiveStream(null);
             setActiveTab('workspace');
           }
         }}
+      />
+
+      <TestModeDrawer
+        open={testModeOpen}
+        onClose={() => setTestModeOpen(false)}
+        onNavigateTab={handleSelectTab}
+        onOpenStream={handleOpenStream}
       />
 
       <PreferencesSheet open={prefsOpen} onClose={() => setPrefsOpen(false)} />

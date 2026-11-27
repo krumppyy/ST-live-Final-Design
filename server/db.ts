@@ -17,6 +17,12 @@ import type {
   Livestream,
   UserRole,
 } from '../src/types';
+import {
+  hydrateAuthSession,
+  initPlatformStore,
+  listExtendedDirectoryUsers,
+  listExtendedStreams,
+} from './platformStore';
 
 const DB_PATH = path.resolve(process.cwd(), 'stlive.db');
 export const db = new Database(DB_PATH);
@@ -214,6 +220,7 @@ export function initSchema(): void {
   `);
 
   seedInitialData();
+  initPlatformStore();
 }
 
 function seedInitialData(): void {
@@ -415,14 +422,7 @@ export function getUserByUid(uid: string) {
 }
 
 export function listDirectoryUsers(): DirectoryUser[] {
-  const rows = db
-    .prepare('SELECT uid, display_name, role FROM users ORDER BY created_at DESC LIMIT 60')
-    .all() as Array<{ uid: string; display_name: string; role: UserRole }>;
-  return rows.map((r) => ({
-    uid: r.uid,
-    displayName: r.display_name,
-    role: r.role,
-  }));
+  return listExtendedDirectoryUsers();
 }
 
 export function parsePermissions(json: string): AdminPermissions {
@@ -567,72 +567,11 @@ export function getTasksForAdmin(hostUid: string, adminUid: string): AdminTask[]
 export function buildSessionFromToken(token: string | undefined): AuthSession | null {
   const payload = verifySessionToken(token);
   if (!payload) return null;
-  const user = getUserByUid(payload.uid);
-  if (!user) return null;
-
-  if (payload.role === 'admin' && payload.assignedHostUid) {
-    const grant = getActiveGrant(payload.assignedHostUid, payload.uid);
-    if (!grant) return null;
-    return {
-      token: token!,
-      uid: user.uid,
-      displayName: user.display_name,
-      role: 'admin',
-      coins: user.coins,
-      diamonds: user.diamonds,
-      assignedHostUid: grant.host_uid,
-      assignedHostName: grant.host_name,
-      permissions: parsePermissions(grant.permissions_json),
-    };
-  }
-
-  return {
-    token: token!,
-    uid: user.uid,
-    displayName: user.display_name,
-    role: payload.role,
-    coins: user.coins,
-    diamonds: user.diamonds,
-  };
+  return hydrateAuthSession(token!, payload.uid, payload.role, payload.assignedHostUid);
 }
 
 export function listAllStreams(): Omit<Livestream, 'seats' | 'pk'>[] {
-  const rows = db
-    .prepare(
-      `SELECT id, host_uid, host_name, title, category, language, viewer_count, thumbnail, is_live, max_seats, game_room_id, game_type
-       FROM streams
-       WHERE is_live = 1
-       ORDER BY viewer_count DESC`
-    )
-    .all() as Array<{
-    id: string;
-    host_uid: string;
-    host_name: string;
-    title: string;
-    category: Livestream['category'];
-    language: string;
-    viewer_count: number;
-    thumbnail: string;
-    is_live: number;
-    max_seats: number;
-    game_room_id: string | null;
-    game_type: 'ludo' | 'snakes' | 'fps' | null;
-  }>;
-
-  return rows.map((r) => ({
-    id: r.id,
-    hostUid: r.host_uid,
-    hostName: r.host_name,
-    title: r.title,
-    category: r.category,
-    language: r.language,
-    viewerCount: r.viewer_count,
-    thumbnail: r.thumbnail,
-    isLive: Boolean(r.is_live),
-    maxSeats: r.max_seats,
-    gameRoomId: r.game_room_id ?? undefined,
-    gameType: r.game_type ?? undefined,
-  }));
+  return listExtendedStreams();
 }
 
 export function listAgencyHosts(agencyUid: string): AgencyHostRecord[] {

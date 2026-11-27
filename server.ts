@@ -39,10 +39,14 @@ import {
   verifyPassword,
 } from './server/db';
 import { MultiplayerGameEngine } from './server/games';
+import { createPlatformRouter } from './server/platformRoutes';
+import { isBlockedByHost } from './server/platformStore';
+import { checkWsFlood, stripProtoPollution, threatScan } from './server/security';
 import type {
   AdminPermissions,
   AuthSession,
   ChatMessage,
+  DiceDuelState,
   Livestream,
   MultiGuestSeat,
   PKState,
@@ -70,12 +74,24 @@ const gameEngine = new MultiplayerGameEngine();
 interface LiveRoomRuntime {
   seats: MultiGuestSeat[];
   pk: PKState;
+  duel: DiceDuelState;
   messages: ChatMessage[];
   mutedUids: Set<string>;
   followers: Set<string>;
 }
 
 const roomRuntimes = new Map<string, LiveRoomRuntime>();
+
+function createEmptyDuel(): DiceDuelState {
+  return {
+    active: false,
+    endsAt: 0,
+    entryTokens: 5,
+    potTokens: 0,
+    participants: [],
+    winnerName: null,
+  };
+}
 
 function getOrCreateRuntime(streamId: string, maxSeats: number, hostUid: string, hostName: string): LiveRoomRuntime {
   let rt = roomRuntimes.get(streamId);
@@ -94,6 +110,7 @@ function getOrCreateRuntime(streamId: string, maxSeats: number, hostUid: string,
         challengerScore: streamId.includes('pk') ? 2180 : 0,
         endsAt: Date.now() + 1000 * 60 * 5,
       },
+      duel: createEmptyDuel(),
       messages: [
         {
           id: `welcome-${streamId}`,
@@ -121,6 +138,7 @@ function hydrateStreams(): Livestream[] {
       ...s,
       seats: rt.seats,
       pk: rt.pk,
+      duel: rt.duel,
     };
   });
 }
@@ -393,21 +411,34 @@ app.get('/api/streams', (_req, res) => {
 app.post('/api/streams', (req, res) => {
   const session = requireAuth(req, res);
   if (!session) return;
-  if (session.role !== 'host' && session.role !== 'band') {
+  if (session.role !== 'host' && session.role !== 'band' && session.role !== 'staff') {
     return res.status(403).json({ error: 'Only Hosts or Bands can start a live broadcast.' });
   }
+  if (session.bannedUntil && session.bannedUntil > Date.now()) {
+    return res.status(403).json({ error: 'Your account has an active temporary broadcast restriction.' });
+  }
 
-  const title = typeof req.body?.title === 'string' ? req.body.title.trim().slice(0, 90) : '';
+  const title = threatScan(typeof req.body?.title === 'string' ? req.body.title.trim().slice(0, 90) : '').clean;
   const category = typeof req.body?.category === 'string' ? req.body.category : 'solo';
   const language = typeof req.body?.language === 'string' ? req.body.language.slice(0, 24) : 'English';
+  const countryCode =
+    typeof req.body?.countryCode === 'string' && req.body.countryCode.trim().length >= 2
+      ? req.body.countryCode.trim().toUpperCase().slice(0, 2)
+      : session.countryCode || 'US';
   const maxSeats = Math.min(12, Math.max(2, Number(req.body?.maxSeats) || 4));
   const gameType =
     req.body?.gameType === 'ludo' || req.body?.gameType === 'snakes' || req.body?.gameType === 'fps'
       ? req.body.gameType
       : null;
+  const rawPin = typeof req.body?.pin === 'string' ? req.body.pin.trim() : '';
+  const hasPin = /^\d{6}$/.test(rawPin);
+  const consentVerified = req.body?.consentVerified !== false;
 
   if (title.length < 3) {
     return res.status(400).json({ error: 'Stream title must be at least 3 characters.' });
+  }
+  if (rawPin && !hasPin) {
+    return res.status(400).json({ error: 'Room PIN lock must be exactly 6 digits.' });
   }
 
   const validCategories = ['solo', 'multi_guest', 'audio', 'pk', 'games', 'music_band', 'gaming', 'brand_drop'];
@@ -439,9 +470,25 @@ app.post('/api/streams', (req, res) => {
   }
 
   db.prepare(
-    `INSERT INTO streams (id, host_uid, host_name, title, category, language, viewer_count, thumbnail, is_live, max_seats, game_room_id, game_type)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?)`
-  ).run(id, session.uid, session.displayName, title, safeCategory, language, thumbMap[safeCategory], maxSeats, gameRoomId, gameType);
+    `INSERT INTO streams (id, host_uid, host_name, title, category, language, country_code, viewer_count, thumbnail, is_live, max_seats, game_room_id, game_type, pin_hash, is_locked, consent_verified, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    session.uid,
+    session.displayName,
+    title,
+    safeCategory,
+    language,
+    countryCode,
+    thumbMap[safeCategory],
+    maxSeats,
+    gameRoomId,
+    gameType,
+    hasPin ? hashPassword(rawPin) : null,
+    hasPin ? 1 : 0,
+    consentVerified ? 1 : 0,
+    Date.now()
+  );
 
   const streams = hydrateStreams();
   broadcastAll('streams:updated', streams);
@@ -1007,11 +1054,86 @@ app.delete('/api/inbox/messages/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Mount GapList Platform Router (Identity/2FA/Resets, Server-Authoritative Economy, PIN Rooms, Safety, Staff Console, Test Mode)
+app.use(
+  '/api',
+  createPlatformRouter({
+    broadcastAll,
+    broadcastToRoom: broadcastRoom,
+    getHydratedStreams: hydrateStreams,
+    onGiftBroadcast: (roomId, g) => {
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      if (rt.pk.active) {
+        rt.pk.hostScore += g.coins;
+      }
+      const giftMsg: ChatMessage = {
+        id: crypto.randomUUID(),
+        roomId,
+        uid: g.uid,
+        displayName: g.displayName,
+        role: g.role,
+        text: `sent ${g.giftName}${g.combo > 1 ? ` x${g.combo}` : ''}`,
+        gift: { name: g.giftName, coins: g.coins, combo: g.combo, novaBurst: g.novaBurst },
+        timestamp: Date.now(),
+      };
+      rt.messages.push(giftMsg);
+      if (rt.messages.length > 200) rt.messages.shift();
+      broadcastRoom(roomId, 'room:chat_msg', giftMsg);
+      broadcastRoom(roomId, 'room:state', {
+        roomId,
+        seats: rt.seats,
+        pk: rt.pk,
+        duel: rt.duel,
+        messages: rt.messages,
+        mutedUids: Array.from(rt.mutedUids),
+        followers: Array.from(rt.followers),
+      });
+    },
+  })
+);
+
+// Server-authoritative Dice Duel 45s settlement sweeper (G-017 / G-088)
+setInterval(() => {
+  const now = Date.now();
+  for (const [roomId, rt] of roomRuntimes.entries()) {
+    if (rt.duel.active && rt.duel.endsAt > 0 && now >= rt.duel.endsAt) {
+      rt.duel.active = false;
+      const rolled = rt.duel.participants.filter((p) => p.total > 0);
+      if (rolled.length > 0) {
+        const best = Math.max(...rolled.map((p) => p.total));
+        const winners = rolled.filter((p) => p.total === best);
+        const share = Math.max(1, Math.floor(rt.duel.potTokens / winners.length));
+        for (const w of winners) {
+          db.prepare('UPDATE users SET tokens = tokens + ? WHERE uid = ?').run(share, w.uid);
+        }
+        rt.duel.winnerName = winners.map((w) => w.displayName).join(' & ') + ` (+${share} Tokens)`;
+      } else {
+        rt.duel.winnerName = 'No rolls — pot refunded';
+        for (const p of rt.duel.participants) {
+          db.prepare('UPDATE users SET tokens = tokens + ? WHERE uid = ?').run(rt.duel.entryTokens, p.uid);
+        }
+      }
+      broadcastRoom(roomId, 'room:state', {
+        roomId,
+        seats: rt.seats,
+        pk: rt.pk,
+        duel: rt.duel,
+        messages: rt.messages,
+        mutedUids: Array.from(rt.mutedUids),
+        followers: Array.from(rt.followers),
+      });
+    }
+  }
+}, 1500);
+
 // ---------------------------------------------------------------------------
-// WebSocket Server: Live Rooms + Server-Authoritative Multiplayer Games
+// WebSocket Server: Live Rooms + Server-Authoritative Multiplayer Games + Dice Duel + WebRTC Signaling
 // ---------------------------------------------------------------------------
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  const clientIp = req.socket.remoteAddress || 'ws-local';
   const meta: ClientMeta = {
     ws,
     session: null,
@@ -1024,14 +1146,31 @@ wss.on('connection', (ws) => {
   sendWs(ws, 'games:init', gameEngine.listRooms());
 
   ws.on('message', (raw) => {
+    const rawStr = raw.toString();
+    if (rawStr.length > 16_384) {
+      sendWs(ws, 'ws:error', { message: 'Frame exceeds size cap.' });
+      return;
+    }
     let msg: { event?: string; payload?: Record<string, unknown> };
     try {
-      msg = JSON.parse(raw.toString());
+      msg = stripProtoPollution(JSON.parse(rawStr));
     } catch {
       return;
     }
     const event = msg.event;
     const payload = msg.payload || {};
+
+    if (event !== 'game:fps_pose' && event !== 'inbox:typing') {
+      const flood = checkWsFlood(meta.session?.uid || clientIp);
+      if (!flood.allowed) {
+        sendWs(ws, 'ws:error', {
+          message: flood.lockdown
+            ? 'Anti-flood shield triggered temporary safety cooldown.'
+            : 'Slow down — rate limit reached.',
+        });
+        return;
+      }
+    }
 
     if (event === 'auth:identify') {
       const token = typeof payload.token === 'string' ? payload.token : undefined;
@@ -1130,15 +1269,24 @@ wss.on('connection', (ws) => {
 
     if (event === 'room:chat') {
       const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
-      const text = typeof payload.text === 'string' ? payload.text.trim().slice(0, 260) : '';
-      if (!roomId || !text || !meta.session) return;
+      const rawText = typeof payload.text === 'string' ? payload.text.trim().slice(0, 260) : '';
+      if (!roomId || !rawText || !meta.session) return;
       const stream = listAllStreams().find((s) => s.id === roomId);
       if (!stream) return;
+      if (isBlockedByHost(stream.hostUid, meta.session.uid)) {
+        sendWs(ws, 'ws:error', { message: 'You are blocked from chatting in this room.' });
+        return;
+      }
       const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
       if (rt.mutedUids.has(meta.session.uid)) {
         sendWs(ws, 'ws:error', { message: 'You are muted in this live room.' });
         return;
       }
+      const scanned = threatScan(rawText, meta.session.uid);
+      const text = scanned.clean;
+      if (!text) return;
+      // Grant +1 XP per chat message (G-016)
+      db.prepare('UPDATE users SET xp = xp + 1 WHERE uid = ?').run(meta.session.uid);
       const chat: ChatMessage = {
         id: crypto.randomUUID(),
         roomId,
@@ -1146,11 +1294,14 @@ wss.on('connection', (ws) => {
         displayName: meta.session.displayName,
         role: meta.session.role,
         isFollower: rt.followers.has(meta.session.uid),
+        isVip: Boolean(meta.session.vipUntil && meta.session.vipUntil > Date.now()),
+        level: meta.session.level,
         text,
+        stickerCode: /^\[st:[a-z]+:[a-z0-9]+\]$/.test(text) ? text : undefined,
         timestamp: Date.now(),
       };
       rt.messages.push(chat);
-      if (rt.messages.length > 80) rt.messages.shift();
+      if (rt.messages.length > 200) rt.messages.shift();
       broadcastRoom(roomId, 'room:chat_msg', chat);
       return;
     }
@@ -1409,6 +1560,112 @@ wss.on('connection', (ws) => {
         conversationId,
         uid: meta.session.uid,
         displayName: meta.session.displayName,
+      });
+      return;
+    }
+
+    // --- Dice Duel (45s round, 5-token entry, server-settled pot — G-017) ---
+    if (event === 'duel:start') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      if (!roomId || !meta.session) return;
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      if (rt.duel.active) {
+        sendWs(ws, 'ws:error', { message: 'A Dice Duel round is already live.' });
+        return;
+      }
+      rt.duel = {
+        active: true,
+        endsAt: Date.now() + 45_000,
+        entryTokens: 5,
+        potTokens: 0,
+        participants: [],
+        winnerName: null,
+      };
+      broadcastRoom(roomId, 'room:state', {
+        roomId,
+        seats: rt.seats,
+        pk: rt.pk,
+        duel: rt.duel,
+        messages: rt.messages,
+        mutedUids: Array.from(rt.mutedUids),
+        followers: Array.from(rt.followers),
+      });
+      return;
+    }
+
+    if (event === 'duel:join_roll') {
+      const roomId = typeof payload.roomId === 'string' ? payload.roomId : meta.subscribedRoomId || '';
+      if (!roomId || !meta.session) {
+        sendWs(ws, 'ws:error', { message: 'Sign in to play Dice Duel.' });
+        return;
+      }
+      const stream = listAllStreams().find((s) => s.id === roomId);
+      if (!stream) return;
+      const rt = getOrCreateRuntime(stream.id, stream.maxSeats, stream.hostUid, stream.hostName);
+      if (!rt.duel.active) {
+        sendWs(ws, 'ws:error', { message: 'Start a Dice Duel round first.' });
+        return;
+      }
+      if (rt.duel.participants.some((p) => p.uid === meta.session!.uid)) {
+        sendWs(ws, 'ws:error', { message: 'You already rolled in this 45s Dice Duel round.' });
+        return;
+      }
+      const charge = db
+        .prepare('UPDATE users SET tokens = tokens - ? WHERE uid = ? AND tokens >= ?')
+        .run(rt.duel.entryTokens, meta.session.uid, rt.duel.entryTokens);
+      if (charge.changes !== 1) {
+        sendWs(ws, 'ws:error', { message: 'Requires 5 tokens to join Dice Duel.' });
+        return;
+      }
+      const d1 = 1 + Math.floor(Math.random() * 6);
+      const d2 = 1 + Math.floor(Math.random() * 6);
+      rt.duel.potTokens += rt.duel.entryTokens;
+      rt.duel.participants.push({
+        uid: meta.session.uid,
+        displayName: meta.session.displayName,
+        dice: [d1, d2],
+        total: d1 + d2,
+      });
+      broadcastRoom(roomId, 'room:state', {
+        roomId,
+        seats: rt.seats,
+        pk: rt.pk,
+        duel: rt.duel,
+        messages: rt.messages,
+        mutedUids: Array.from(rt.mutedUids),
+        followers: Array.from(rt.followers),
+      });
+      return;
+    }
+
+    // --- WebRTC Mesh & 1v1 Call Signaling Relay (G-035, G-039, G-065) ---
+    if (
+      event === 'rtc:offer' ||
+      event === 'rtc:answer' ||
+      event === 'rtc:ice' ||
+      event === 'rtc:bye' ||
+      event === 'call:invite' ||
+      event === 'call:accept' ||
+      event === 'call:decline' ||
+      event === 'call:hangup'
+    ) {
+      if (!meta.session) return;
+      const targetUid = typeof payload.targetUid === 'string' ? payload.targetUid : '';
+      if (!targetUid) return;
+      if (event === 'rtc:offer' || event === 'rtc:answer') {
+        const sdp = typeof payload.sdp === 'string' ? payload.sdp : '';
+        if (sdp.length > 8192) return;
+      }
+      if (event === 'rtc:ice') {
+        const cand = typeof payload.candidate === 'string' ? payload.candidate : '';
+        if (cand.length > 1200) return;
+      }
+      broadcastToUids([targetUid], event, {
+        ...payload,
+        fromUid: meta.session.uid,
+        fromName: meta.session.displayName,
       });
     }
   });

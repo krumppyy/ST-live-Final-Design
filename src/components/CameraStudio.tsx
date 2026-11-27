@@ -208,6 +208,8 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
   const [liveCategory, setLiveCategory] = useState<Livestream['category']>('solo');
   const [liveSeats, setLiveSeats] = useState(6);
   const [liveGameType, setLiveGameType] = useState<'' | GameType>('fps');
+  const [livePin, setLivePin] = useState('');
+  const [liveConsent, setLiveConsent] = useState(true);
   const [launchingLive, setLaunchingLive] = useState(false);
   const [lastLiveRoomId, setLastLiveRoomId] = useState<string | null>(null);
 
@@ -1479,6 +1481,14 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
       onRequireLogin();
       return;
     }
+    if (!liveConsent) {
+      pushToast('Please confirm broadcast safety & consent guidelines before going live.', 'error');
+      return;
+    }
+    if (livePin.trim() && !/^\d{6}$/.test(livePin.trim())) {
+      pushToast('Room PIN must be exactly 6 digits (or leave blank for public room).', 'error');
+      return;
+    }
     setLaunchingLive(true);
     try {
       const res = await authFetch('/api/streams', {
@@ -1488,6 +1498,9 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
           category: liveCategory,
           maxSeats: liveSeats,
           gameType: liveGameType || undefined,
+          pin: livePin.trim() || undefined,
+          consentVerified: liveConsent,
+          countryCode: session.countryCode || 'US',
         }),
       });
       const data = await res.json();
@@ -2722,12 +2735,32 @@ export const CameraStudio: React.FC<CameraStudioProps> = ({
                   <option value={12}>12 Seats</option>
                 </select>
               </div>
+              <div className="grid grid-cols-2 gap-1.5 items-center text-[11px]">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={livePin}
+                  onChange={(e) => setLivePin(e.target.value.replace(/\D/g, ''))}
+                  placeholder="Optional 6-digit PIN"
+                  className="h-8 rounded-lg border border-white/15 bg-white/10 px-2.5 font-mono-nums text-xs text-white placeholder:text-white/45 outline-none focus:border-[#E8C86A]"
+                />
+                <label className="flex items-center gap-1.5 text-[10px] text-white/85 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={liveConsent}
+                    onChange={(e) => setLiveConsent(e.target.checked)}
+                    className="accent-[#D90429]"
+                  />
+                  <span>18+ & Safety Consent</span>
+                </label>
+              </div>
               <button
                 type="submit"
-                disabled={launchingLive}
+                disabled={launchingLive || !liveConsent}
                 className="h-9 w-full rounded-full bg-[#D90429] text-xs font-bold tracking-wide text-white cursor-pointer disabled:opacity-50"
               >
-                {launchingLive ? 'Starting...' : 'Start Live Now'}
+                {launchingLive ? 'Starting...' : livePin.length === 6 ? 'Start PIN-Locked Live' : 'Start Live Now'}
               </button>
             </form>
           )}

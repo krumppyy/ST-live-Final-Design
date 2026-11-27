@@ -3,47 +3,43 @@ import {
   Camera,
   Compass,
   Film,
+  FlaskConical,
   Gamepad2,
   LayoutGrid,
   MessageCircle,
   SlidersHorizontal,
-  User,
+  UserCircle2,
   WifiOff,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useOnlineStatus } from '../hooks/usePWAInstall';
+import { countryFlag } from '../lib/countries';
+import { getThemePreset } from '../lib/themes';
 
-export type ActiveTab = 'live' | 'games' | 'camera' | 'library' | 'inbox' | 'workspace';
+export type ActiveTab = 'live' | 'games' | 'camera' | 'library' | 'inbox' | 'workspace' | 'me';
 
 interface NavbarProps {
   activeTab: ActiveTab;
   onSelectTab: (tab: ActiveTab) => void;
   onOpenLogin: () => void;
+  onOpenTestMode: () => void;
   onOpenPreferences: () => void;
 }
-
-const GRADE_LABELS: Record<string, string> = {
-  nova: 'Nova Dark',
-  emerald: 'Emerald Forest',
-  surge: 'Surge Cyber',
-  ballot: 'Ballot Royal',
-  onyx: 'Onyx Pro',
-  ember: 'Spooky Ember',
-};
 
 export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   onSelectTab,
   onOpenLogin,
+  onOpenTestMode,
   onOpenPreferences,
 }) => {
-  const { session, streams, theme, grade, mediaLibrary, t } = useApp();
+  const { session, streams, grade, mediaLibrary, t } = useApp();
   const isOnline = useOnlineStatus();
 
   const totalLiveViewers = streams.reduce((acc, s) => acc + s.viewerCount, 0);
-  const themeDisplayName = theme === 'light' ? 'Quiet Light' : GRADE_LABELS[grade] || 'Nova Dark';
+  const themeDisplayName = getThemePreset(grade).name;
 
-  const railItems: Array<{
+  const desktopRailItems: Array<{
     id: ActiveTab;
     label: string;
     icon: React.ElementType;
@@ -55,13 +51,17 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'library', label: 'Library', icon: Film, count: mediaLibrary.length || undefined },
     { id: 'inbox', label: 'Inbox', icon: MessageCircle },
     { id: 'workspace', label: t('navWorkspace'), icon: LayoutGrid },
+    { id: 'me', label: 'Me', icon: UserCircle2 },
   ];
+
+  // Keep Mobile Bottom Bar sleek & uncrowded at 6 items (Me is 1 tap on the topbar account pill)
+  const mobileBarItems = desktopRailItems.slice(0, 6);
 
   return (
     <>
       {/* Signature StreamLive Studio Top Bar (Compact mobile/tablet sizing, punch-hole safe) */}
       <header className="sticky top-0 z-40 w-full border-b border-[var(--border-hairline)] sl-topbar-bg backdrop-blur-md pt-safe-cutout">
-        <div className="flex h-12 md:h-13 items-center justify-between gap-4 px-3 sm:px-5 px-safe-curved">
+        <div className="flex h-12 md:h-13 items-center justify-between gap-2.5 sm:gap-4 px-3 sm:px-5 px-safe-curved">
           {/* Left: Circular SL Monogram + StreamLive Wordmark */}
           <button
             type="button"
@@ -77,7 +77,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
 
           {/* Center (Desktop): Quiet unboxed live studio summary */}
-          <div className="hidden md:flex items-center gap-2.5 text-xs text-[var(--fg-secondary)] whitespace-nowrap">
+          <div className="hidden lg:flex items-center gap-2.5 text-xs text-[var(--fg-secondary)] whitespace-nowrap">
             <span className="font-mono-nums font-semibold text-[var(--fg-primary)]">
               {totalLiveViewers.toLocaleString()} {t('viewers')}
             </span>
@@ -87,7 +87,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="text-[var(--accent-gold)] font-medium">{themeDisplayName}</span>
           </div>
 
-          {/* Right: Compact Account / Sign In Action (+ Mobile Theme Trigger) */}
+          {/* Right: Test Mode button right beside Sign In / Account Wallet Pill */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
@@ -98,16 +98,39 @@ export const Navbar: React.FC<NavbarProps> = ({
               <SlidersHorizontal className="h-4 w-4" />
             </button>
 
+            {/* Full Functional Test Mode Button (Beside Sign In) */}
+            <button
+              type="button"
+              onClick={onOpenTestMode}
+              title="Open Full Functional Test Mode Sandbox"
+              className={`flex h-8 md:h-9 items-center gap-1.5 rounded-lg border px-2.5 md:px-3 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                session?.isTestMode
+                  ? 'border-amber-500/60 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+                  : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] text-[var(--fg-primary)] hover:border-amber-500/60 hover:text-amber-400'
+              }`}
+            >
+              <FlaskConical className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+              <span className="hidden xs:inline sm:inline">Test Mode</span>
+            </button>
+
             {session ? (
               <button
                 type="button"
-                onClick={() => onSelectTab('workspace')}
-                className="flex h-8 md:h-9 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-surface)] px-2.5 md:px-3 text-xs md:text-sm font-medium text-[var(--fg-primary)] hover:border-[var(--accent-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer max-w-[180px]"
+                onClick={() => onSelectTab('me')}
+                title="Open Me Hub (Profile, Wallet, VIP, Payouts & Staff)"
+                className={`flex h-8 md:h-9 items-center gap-1.5 rounded-lg border px-2.5 md:px-3 text-xs font-medium text-[var(--fg-primary)] transition-colors whitespace-nowrap shrink-0 cursor-pointer max-w-[230px] ${
+                  activeTab === 'me'
+                    ? 'border-[var(--accent-primary)] bg-[var(--accent-primary)]/12'
+                    : 'border-[var(--border-hairline)] bg-[var(--bg-surface)] hover:border-[var(--accent-primary)]'
+                }`}
               >
-                <User className="h-3.5 w-3.5 shrink-0 text-[var(--accent-primary)]" />
-                <span className="truncate">{session.displayName}</span>
+                <span className="text-sm leading-none shrink-0">{countryFlag(session.countryCode)}</span>
+                <span className="truncate font-semibold">{session.displayName}</span>
                 <span className="hidden sm:inline font-mono-nums text-[11px] text-[var(--accent-gold)]">
-                  {session.coins}
+                  {session.coins.toLocaleString()}c
+                </span>
+                <span className="hidden xl:inline font-mono-nums text-[11px] text-[var(--accent-secondary)]">
+                  Lv.{session.level}
                 </span>
               </button>
             ) : (
@@ -126,10 +149,10 @@ export const Navbar: React.FC<NavbarProps> = ({
       {/* Signature StreamLive Desktop Left Studio Rail (Compact 72px width) */}
       <aside
         aria-label="Studio Navigation Rail"
-        className="hidden md:flex fixed left-0 top-safe-rail bottom-0 z-30 w-[72px] flex-col items-center justify-between border-r border-[var(--accent-primary)]/60 sl-rail-bg py-3"
+        className="hidden md:flex fixed left-0 top-safe-rail bottom-0 z-30 w-[72px] flex-col items-center justify-between border-r border-[var(--accent-primary)]/60 sl-rail-bg py-2.5"
       >
-        <nav className="flex w-full flex-col items-center gap-1.5 px-1.5">
-          {railItems.map((item) => {
+        <nav className="flex w-full flex-col items-center gap-1 px-1.5 overflow-y-auto no-scrollbar">
+          {desktopRailItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
             return (
@@ -137,14 +160,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => onSelectTab(item.id)}
-                className={`group relative flex w-full flex-col items-center justify-center gap-1 rounded-xl py-2 transition-colors cursor-pointer ${
+                className={`group relative flex w-full flex-col items-center justify-center gap-0.5 rounded-xl py-1.5 transition-colors cursor-pointer ${
                   active
                     ? 'text-[var(--fg-primary)]'
                     : 'text-[var(--fg-secondary)] hover:text-[var(--fg-primary)] hover:bg-[var(--bg-surface)]/70'
                 }`}
               >
                 <span
-                  className={`flex h-9 w-9 items-center justify-center rounded-xl transition-transform duration-150 ${
+                  className={`flex h-8 w-8 items-center justify-center rounded-xl transition-transform duration-150 ${
                     active
                       ? 'sl-rail-icon-active shadow-sm scale-[1.03]'
                       : 'bg-[var(--bg-surface)] border border-[var(--border-hairline)] group-hover:border-[var(--accent-primary)]/60'
@@ -160,7 +183,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   {item.label}
                 </span>
                 {item.count !== undefined && item.count > 0 && (
-                  <span className="absolute right-2 top-1.5 font-mono-nums text-[9px] font-bold text-[var(--accent-secondary)]">
+                  <span className="absolute right-2 top-1 font-mono-nums text-[9px] font-bold text-[var(--accent-secondary)]">
                     {item.count}
                   </span>
                 )}
@@ -169,8 +192,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           })}
         </nav>
 
-        {/* Bottom Rail Trigger: Consolidated Themes, Fonts, Languages & OS Calibration */}
-        <div className="w-full border-t border-[var(--border-hairline)] pt-2.5 px-1.5">
+        {/* Bottom Rail Trigger: Consolidated 37 Themes, 20 Languages, Fonts & OS Calibration */}
+        <div className="w-full border-t border-[var(--border-hairline)] pt-2 px-1.5 shrink-0">
           <button
             type="button"
             onClick={onOpenPreferences}
@@ -186,13 +209,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </aside>
 
-      {/* Mobile & Tablet Fixed Bottom Bar (Sleek compact icons & spacing) */}
+      {/* Mobile & Tablet Fixed Bottom Bar (Sleek compact 6-slot navigation) */}
       <nav
         aria-label="Mobile Navigation"
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t border-[var(--accent-primary)]/45 sl-rail-bg/95 backdrop-blur-md pb-safe-bottom px-safe-bar"
       >
         <div className="grid grid-cols-6 h-12 items-center">
-          {railItems.map((item) => {
+          {mobileBarItems.map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
             return (

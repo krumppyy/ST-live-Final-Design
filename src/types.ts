@@ -1,4 +1,4 @@
-export type UserRole = 'guest' | 'host' | 'admin' | 'agency' | 'band';
+export type UserRole = 'guest' | 'host' | 'admin' | 'agency' | 'band' | 'staff';
 
 export type StreamCategory =
   | 'all'
@@ -11,11 +11,34 @@ export type StreamCategory =
   | 'gaming'
   | 'brand_drop';
 
+export type DiscoveryFeedTab = 'for_you' | 'following' | 'party' | 'nearby' | 'new' | 'popular';
+
 export type ThemeMode = 'dark' | 'light';
-export type ColorGrade = 'nova' | 'emerald' | 'surge' | 'ballot' | 'onyx' | 'ember';
+export type ColorGrade = string; // Supports all 37 theme deck IDs (nova, emerald, surge, ballot, onyx, ember, etc.)
 export type FontChoice = 'jakarta' | 'fredoka' | 'outfit' | 'manrope' | 'dmsans' | 'playfair';
 export type FontScale = 'sm' | 'md' | 'lg' | 'xl';
-export type LocaleCode = 'en' | 'hi' | 'bn' | 'es' | 'ar' | 'ja';
+export type LocaleCode =
+  | 'en'
+  | 'hi'
+  | 'bn'
+  | 'es'
+  | 'ar'
+  | 'ja'
+  | 'fr'
+  | 'de'
+  | 'pt'
+  | 'ru'
+  | 'zh'
+  | 'ko'
+  | 'tr'
+  | 'id'
+  | 'vi'
+  | 'th'
+  | 'it'
+  | 'ur'
+  | 'tl'
+  | 'ms';
+
 export type CutoutProfile =
   | 'auto'
   | 'punch_center'
@@ -23,6 +46,8 @@ export type CutoutProfile =
   | 'dynamic_island'
   | 'curved_tablet'
   | 'flat';
+
+export type VipTier = 'none' | 'weekly' | 'monthly' | 'lifetime';
 
 export interface CapturedAsset {
   id: string;
@@ -42,19 +67,54 @@ export interface AdminPermissions {
 export interface AuthSession {
   token: string;
   uid: string;
+  numericId: number;
   displayName: string;
   role: UserRole;
+  countryCode: string;
+  emailMasked?: string;
+  phoneMasked?: string;
   coins: number;
   diamonds: number;
+  tokens: number;
+  xp: number;
+  level: number;
+  vipTier: VipTier;
+  vipUntil: number;
+  isPro: boolean;
+  verified: boolean;
+  freePinTrials: number;
+  dailyStreak: number;
+  checkedInToday: boolean;
+  totpEnabled: boolean;
+  ownedPerks: string[];
+  monetagStatus: 'none' | 'pending' | 'verified' | 'rejected';
+  monetagTipUrl?: string;
+  bio?: string;
+  age?: string;
+  gender?: string;
+  hobbies?: string;
+  showAge?: boolean;
+  showGender?: boolean;
+  showFollowers?: boolean;
+  showVisits?: boolean;
+  allowDm?: boolean;
+  bannerPos?: 'top' | 'lower' | 'corner';
+  bannerSize?: '728x90' | '468x60' | '300x250';
+  bannedUntil?: number;
+  banStrikes?: number;
   assignedHostUid?: string;
   assignedHostName?: string;
   permissions?: AdminPermissions;
+  isTestMode?: boolean;
 }
 
 export interface DirectoryUser {
   uid: string;
+  numericId?: number;
   displayName: string;
   role: UserRole;
+  countryCode?: string;
+  verified?: boolean;
 }
 
 export interface AdminGrantSummary {
@@ -94,19 +154,43 @@ export interface PKState {
   endsAt: number;
 }
 
+export interface DiceDuelState {
+  active: boolean;
+  endsAt: number;
+  entryTokens: number;
+  potTokens: number;
+  participants: Array<{
+    uid: string;
+    displayName: string;
+    dice: [number, number] | null;
+    total: number;
+  }>;
+  winnerName: string | null;
+}
+
 export interface Livestream {
   id: string;
   hostUid: string;
+  hostNumericId?: number;
   hostName: string;
+  hostVerified?: boolean;
+  hostMonetagTipUrl?: string;
+  countryCode: string;
   title: string;
   category: Exclude<StreamCategory, 'all'>;
   language: string;
   viewerCount: number;
   thumbnail: string;
   isLive: boolean;
+  isLocked?: boolean;
+  consentVerified?: boolean;
+  createdAt?: number;
+  totalGiftsCoins?: number;
+  followerCount?: number;
   maxSeats: number;
   seats: MultiGuestSeat[];
   pk: PKState;
+  duel?: DiceDuelState;
   gameRoomId?: string;
   gameType?: GameType;
 }
@@ -118,8 +202,11 @@ export interface ChatMessage {
   displayName: string;
   role: UserRole;
   isFollower?: boolean;
+  isVip?: boolean;
+  level?: number;
   text: string;
-  gift?: { name: string; coins: number };
+  stickerCode?: string;
+  gift?: { name: string; coins: number; combo?: number; novaBurst?: boolean };
   pinned?: boolean;
   timestamp: number;
 }
@@ -278,3 +365,59 @@ export interface InboxMessage {
   createdAt: number;
 }
 
+export interface PayoutRecord {
+  id: number;
+  uid: string;
+  displayName: string;
+  diamonds: number;
+  usdAmount: number;
+  method: string;
+  destinationMasked: string;
+  status: 'pending' | 'approved' | 'denied';
+  createdAt: string;
+}
+
+export interface RoomVisitor {
+  visitorUid: string;
+  visitorName: string;
+  visitedAt: number;
+}
+
+export interface SafetyReport {
+  id: number;
+  roomId: string;
+  targetUid: string;
+  reporterUid: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface SafetyAppeal {
+  id: number;
+  uid: string;
+  displayName: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'denied' | 'dismissed';
+  staffNote?: string;
+  createdAt: string;
+}
+
+export interface PasswordResetRecord {
+  id: number;
+  uid: string;
+  displayName?: string;
+  contactMasked: string;
+  status: 'pending' | 'approved' | 'completed' | 'expired';
+  expiresAt: number;
+  createdAt: string;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  actorUid: string;
+  action: string;
+  target: string;
+  metaMasked: string;
+  createdAt: string;
+}

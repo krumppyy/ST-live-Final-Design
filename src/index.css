@@ -343,6 +343,21 @@ body::-webkit-scrollbar,
   scrollbar-width: none;
 }
 
+[data-corners="square"] *:not(.rounded-full) {
+  border-radius: 2px !important;
+}
+
+@keyframes novaBurstFlash {
+  0% { opacity: 0; transform: scale(0.92); }
+  20% { opacity: 1; transform: scale(1.03); }
+  80% { opacity: 0.95; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.06); }
+}
+
+.animate-nova-burst {
+  animation: novaBurstFlash 2.4s ease-out forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
